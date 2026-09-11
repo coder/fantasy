@@ -130,7 +130,11 @@ func DefaultPrepareCallFunc(model fantasy.LanguageModel, params *openai.ChatComp
 		}
 	}
 
-	if isReasoningModel(model.Model()) {
+	reasoning := isReasoningModel(model.Model())
+	if lm, ok := model.(interface{ isReasoningModel() bool }); ok {
+		reasoning = lm.isReasoningModel()
+	}
+	if reasoning {
 		if providerOptions.LogitBias != nil {
 			params.LogitBias = nil
 			warnings = append(warnings, fantasy.CallWarning{

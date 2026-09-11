@@ -24,19 +24,21 @@ import (
 const topLogprobsMax = 20
 
 type responsesLanguageModel struct {
-	provider   string
-	modelID    string
-	client     openai.Client
-	objectMode fantasy.ObjectMode
+	provider           string
+	modelID            string
+	client             openai.Client
+	objectMode         fantasy.ObjectMode
+	reasoningModelFunc func(modelID string) bool
 }
 
 // newResponsesLanguageModel implements a responses api model.
-func newResponsesLanguageModel(modelID string, provider string, client openai.Client, objectMode fantasy.ObjectMode) responsesLanguageModel {
+func newResponsesLanguageModel(modelID string, provider string, client openai.Client, objectMode fantasy.ObjectMode, reasoningModelFunc func(modelID string) bool) responsesLanguageModel {
 	return responsesLanguageModel{
-		modelID:    modelID,
-		provider:   provider,
-		client:     client,
-		objectMode: objectMode,
+		modelID:            modelID,
+		provider:           provider,
+		client:             client,
+		objectMode:         objectMode,
+		reasoningModelFunc: reasoningModelFunc,
 	}
 }
 
@@ -77,7 +79,8 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		supportsPriorityProcessing: supportsPriorityProcessing,
 	}
 
-	if strings.Contains(strings.ToLower(modelID), "gpt-5-chat") {
+	reasoningGeneration := reasoningGenerationPattern.MatchString(strings.ToLower(modelID))
+	if reasoningGeneration && strings.Contains(strings.ToLower(modelID), "-chat") {
 		return responsesModelConfig{
 			isReasoningModel:           false,
 			systemMessageMode:          defaults.systemMessageMode,
@@ -91,7 +94,7 @@ func getResponsesModelConfig(modelID string) responsesModelConfig {
 		strings.HasPrefix(modelID, "o3") || strings.Contains(modelID, "-o3") ||
 		strings.HasPrefix(modelID, "o4") || strings.Contains(modelID, "-o4") ||
 		strings.HasPrefix(modelID, "oss") || strings.Contains(modelID, "-oss") ||
-		strings.Contains(strings.ToLower(modelID), "gpt-5") ||
+		reasoningGeneration ||
 		strings.Contains(modelID, "codex-") || strings.Contains(modelID, "computer-use") {
 		if strings.Contains(modelID, "o1-mini") || strings.Contains(modelID, "o1-preview") {
 			return responsesModelConfig{
@@ -131,6 +134,15 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 	params := &responses.ResponseNewParams{}
 
 	modelConfig := getResponsesModelConfig(o.modelID)
+	if o.reasoningModelFunc != nil {
+		if reasoning := o.reasoningModelFunc(o.modelID); reasoning != modelConfig.isReasoningModel {
+			modelConfig.isReasoningModel = reasoning
+			modelConfig.systemMessageMode = "system"
+			if reasoning {
+				modelConfig.systemMessageMode = "developer"
+			}
+		}
+	}
 
 	if call.TopK != nil {
 		warnings = append(warnings, fantasy.CallWarning{

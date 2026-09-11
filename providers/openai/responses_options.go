@@ -303,6 +303,10 @@ func ParseResponsesOptions(data map[string]any) (*ResponsesProviderOptions, erro
 // that predates it.
 var responsesGenerationPattern = regexp.MustCompile(`gpt-(?:[4-9]|[1-9]\d)`)
 
+// reasoningGenerationPattern is the subset of those generations that reason:
+// gpt-5 and everything after it, never gpt-4.
+var reasoningGenerationPattern = regexp.MustCompile(`gpt-(?:[5-9]|[1-9]\d)`)
+
 // IsResponsesModel checks if a model ID is a Responses API model for OpenAI.
 func IsResponsesModel(modelID string) bool {
 	return slices.Contains(responsesModelIDs, modelID) ||

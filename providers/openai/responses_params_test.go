@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -8,6 +9,109 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareParams_ReasoningModelClassification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		modelID       string
+		force         *bool
+		wantReasoning bool
+		wantRole      string
+	}{
+		{name: "gpt-5", modelID: "gpt-5", wantReasoning: true, wantRole: "developer"},
+		{name: "gpt-6", modelID: "gpt-6-astra", wantReasoning: true, wantRole: "developer"},
+		{name: "uppercase", modelID: "GPT-6-ASTRA", wantReasoning: true, wantRole: "developer"},
+		{name: "gpt-10", modelID: "gpt-10-turbo", wantReasoning: true, wantRole: "developer"},
+		{name: "gpt-40", modelID: "gpt-40-turbo", wantReasoning: true, wantRole: "developer"},
+		{name: "gpt-100", modelID: "gpt-100-turbo", wantReasoning: true, wantRole: "developer"},
+		{name: "gpt-5-chat", modelID: "gpt-5-chat-latest", wantRole: "system"},
+		{name: "gpt-6-chat", modelID: "gpt-6-chat-latest", wantRole: "system"},
+		{name: "gpt-4o", modelID: "gpt-4o", wantRole: "system"},
+		{name: "unknown default", modelID: "totally-new-model", wantRole: "system"},
+		{name: "force reasoning", modelID: "totally-new-model", force: new(true), wantReasoning: true, wantRole: "developer"},
+		{name: "force non-reasoning", modelID: "gpt-5", force: new(false), wantRole: "system"},
+		{name: "preserve remove mode", modelID: "o1-mini", force: new(true), wantReasoning: true},
+		{name: "override remove mode", modelID: "o1-mini", force: new(false), wantRole: "system"},
+		{name: "agree non-reasoning", modelID: "gpt-4o", force: new(false), wantRole: "system"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := []Option{WithUseResponsesAPI()}
+			if tt.modelID == "totally-new-model" || tt.modelID == "o1-mini" {
+				opts = append(opts, WithResponsesAPIFunc(func(string) bool { return true }))
+			}
+			if tt.force != nil {
+				opts = append(opts, WithReasoningModelFunc(func(modelID string) bool {
+					require.Equal(t, tt.modelID, modelID)
+					return *tt.force
+				}))
+			}
+			provider, err := New(opts...)
+			require.NoError(t, err)
+			model, err := provider.LanguageModel(context.Background(), tt.modelID)
+			require.NoError(t, err)
+			lm, ok := model.(responsesLanguageModel)
+			require.True(t, ok)
+
+			call := testCall(fantasy.Prompt{
+				testTextMessage(fantasy.MessageRoleSystem, "Be helpful."),
+				testTextMessage(fantasy.MessageRoleUser, "hello"),
+			}, &ResponsesProviderOptions{
+				ReasoningEffort:  new(ReasoningEffortHigh),
+				ReasoningSummary: new("detailed"),
+			})
+			call.Temperature = new(0.7)
+			call.TopP = new(0.9)
+			params, warnings, err := lm.prepareParams(call)
+			require.NoError(t, err)
+
+			var unsupported []string
+			for _, warning := range warnings {
+				if warning.Type == fantasy.CallWarningTypeUnsupportedSetting {
+					unsupported = append(unsupported, warning.Setting)
+				}
+			}
+			if tt.wantReasoning {
+				require.Equal(t, "high", string(params.Reasoning.Effort))
+				require.Equal(t, "detailed", string(params.Reasoning.Summary))
+				require.False(t, params.Temperature.Valid())
+				require.False(t, params.TopP.Valid())
+				require.ElementsMatch(t, []string{"temperature", "topP"}, unsupported)
+			} else {
+				require.Empty(t, params.Reasoning.Effort)
+				require.Empty(t, params.Reasoning.Summary)
+				require.True(t, params.Temperature.Valid())
+				require.Equal(t, 0.7, params.Temperature.Value)
+				require.True(t, params.TopP.Valid())
+				require.Equal(t, 0.9, params.TopP.Value)
+				require.ElementsMatch(t, []string{"reasoningEffort", "reasoningSummary"}, unsupported)
+			}
+
+			encoded, err := json.Marshal(params)
+			require.NoError(t, err)
+			var body map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &body))
+			_, hasReasoning := body["reasoning"]
+			require.Equal(t, tt.wantReasoning, hasReasoning)
+			var input []struct {
+				Role string `json:"role"`
+			}
+			require.NoError(t, json.Unmarshal(body["input"], &input))
+			if tt.wantRole == "" {
+				require.Len(t, input, 1)
+				require.Equal(t, "user", input[0].Role)
+			} else {
+				require.Len(t, input, 2)
+				require.Equal(t, tt.wantRole, input[0].Role)
+			}
+		})
+	}
+}
 
 func TestPrepareParams_Store(t *testing.T) {
 	t.Parallel()
