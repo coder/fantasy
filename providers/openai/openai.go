@@ -31,6 +31,7 @@ type options struct {
 	name                 string
 	useResponsesAPI      bool
 	responsesAPIFunc     func(modelID string) bool
+	reasoningModelFunc   func(modelID string) bool
 	headers              map[string]string
 	userAgent            string
 	client               option.HTTPClient
@@ -143,6 +144,15 @@ func WithResponsesAPIFunc(fn func(modelID string) bool) Option {
 	}
 }
 
+// WithReasoningModelFunc sets a custom classifier for which models are reasoning models.
+// When set, it replaces the built-in model-name heuristics for both the Responses
+// and Chat Completions clients.
+func WithReasoningModelFunc(fn func(modelID string) bool) Option {
+	return func(o *options) {
+		o.reasoningModelFunc = fn
+	}
+}
+
 // WithUserAgent sets an explicit User-Agent header, overriding the default and any
 // value set via WithHeaders.
 func WithUserAgent(ua string) Option {
@@ -194,11 +204,14 @@ func (o *provider) LanguageModel(_ context.Context, modelID string) (fantasy.Lan
 		if objectMode == fantasy.ObjectModeJSON {
 			objectMode = fantasy.ObjectModeAuto
 		}
-		return newResponsesLanguageModel(modelID, o.options.name, client, objectMode), nil
+		return newResponsesLanguageModel(modelID, o.options.name, client, objectMode, o.options.reasoningModelFunc), nil
 	}
 
 	languageModelOptions := append([]LanguageModelOption{}, o.options.languageModelOptions...)
 	languageModelOptions = append(languageModelOptions, WithLanguageModelObjectMode(o.options.objectMode))
+	if o.options.reasoningModelFunc != nil {
+		languageModelOptions = append(languageModelOptions, WithLanguageModelReasoningModelFunc(o.options.reasoningModelFunc))
+	}
 
 	return newLanguageModel(
 		modelID,
