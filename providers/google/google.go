@@ -3,6 +3,7 @@ package google
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -348,7 +349,7 @@ func (g languageModel) prepareParams(call fantasy.Call) (*genai.GenerateContentC
 	return config, content, warnings, nil
 }
 
-func toGooglePrompt(prompt fantasy.Prompt, isVertexAI bool) (*genai.Content, []*genai.Content, []fantasy.CallWarning) { //nolint: unparam
+func toGooglePrompt(prompt fantasy.Prompt, isVertexAI bool) (*genai.Content, []*genai.Content, []fantasy.CallWarning) {
 	var systemInstructions *genai.Content
 	var content []*genai.Content
 	var warnings []fantasy.CallWarning
@@ -544,6 +545,50 @@ func toGooglePrompt(prompt fantasy.Prompt, isVertexAI bool) (*genai.Content, []*
 						}
 						parts = append(parts, &genai.Part{
 							FunctionResponse: functionResponse,
+						})
+
+					case fantasy.ToolResultContentTypeMedia:
+						content, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](result.Output)
+						if !ok {
+							continue
+						}
+						// A function response is JSON only, and nested
+						// functionResponse.parts are accepted by Gemini 3+
+						// models only. Keep the tool call paired with a text
+						// response and attach the media as a sibling inline
+						// part of the same turn, which every Gemini
+						// generation accepts.
+						text := content.Text
+						if text == "" {
+							text = fmt.Sprintf("The tool returned %s content; see the attached media.", content.MediaType)
+						}
+						functionResponse := &genai.FunctionResponse{
+							ID:       result.ToolCallID,
+							Response: map[string]any{"result": text},
+							Name:     toolCall.ToolName,
+						}
+
+						// Vertex breaks with a 400 if this field be present.
+						if isVertexAI {
+							functionResponse.ID = ""
+						}
+						parts = append(parts, &genai.Part{
+							FunctionResponse: functionResponse,
+						})
+
+						data, err := base64.StdEncoding.DecodeString(content.Data)
+						if err != nil {
+							warnings = append(warnings, fantasy.CallWarning{
+								Type:    fantasy.CallWarningTypeOther,
+								Message: fmt.Sprintf("tool result media for %s is not valid base64, sending text only", result.ToolCallID),
+							})
+							continue
+						}
+						parts = append(parts, &genai.Part{
+							InlineData: &genai.Blob{
+								Data:     data,
+								MIMEType: content.MediaType,
+							},
 						})
 					}
 				}
