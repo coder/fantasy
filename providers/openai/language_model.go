@@ -25,6 +25,7 @@ type languageModel struct {
 	modelID                    string
 	client                     openai.Client
 	objectMode                 fantasy.ObjectMode
+	reasoningModelFunc         func(modelID string) bool
 	prepareCallFunc            LanguageModelPrepareCallFunc
 	mapFinishReasonFunc        LanguageModelMapFinishReasonFunc
 	extraContentFunc           LanguageModelExtraContentFunc
@@ -84,6 +85,13 @@ func WithLanguageModelStreamUsageFunc(fn LanguageModelStreamUsageFunc) LanguageM
 func WithLanguageModelToPromptFunc(fn LanguageModelToPromptFunc) LanguageModelOption {
 	return func(l *languageModel) {
 		l.toPromptFunc = fn
+	}
+}
+
+// WithLanguageModelReasoningModelFunc overrides reasoning-model detection for Chat Completions.
+func WithLanguageModelReasoningModelFunc(fn func(modelID string) bool) LanguageModelOption {
+	return func(l *languageModel) {
+		l.reasoningModelFunc = fn
 	}
 }
 
@@ -161,7 +169,7 @@ func (o languageModel) prepareParams(call fantasy.Call) (*openai.ChatCompletionN
 		params.PresencePenalty = param.NewOpt(*call.PresencePenalty)
 	}
 
-	if isReasoningModel(o.modelID) {
+	if o.isReasoningModel() {
 		// remove unsupported settings for reasoning models
 		// see https://platform.openai.com/docs/guides/reasoning#limitations
 		if call.Temperature != nil {
@@ -587,6 +595,13 @@ func (o languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 			return
 		}
 	}, nil
+}
+
+func (o languageModel) isReasoningModel() bool {
+	if o.reasoningModelFunc != nil {
+		return o.reasoningModelFunc(o.modelID)
+	}
+	return isReasoningModel(o.modelID)
 }
 
 func isReasoningModel(modelID string) bool {
