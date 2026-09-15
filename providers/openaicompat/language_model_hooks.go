@@ -160,8 +160,14 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 	var messages []openaisdk.ChatCompletionMessageParamUnion
 	var warnings []fantasy.CallWarning
 	hasReasoning := false
+	// All tool replies in a batch must precede synthetic user media.
+	var pendingToolMedia []openaisdk.ChatCompletionMessageParamUnion
 
 	for _, msg := range prompt {
+		if msg.Role != fantasy.MessageRoleTool {
+			messages = append(messages, pendingToolMedia...)
+			pendingToolMedia = nil
+		}
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
 			var blocks []openaisdk.ChatCompletionContentPartTextParam
@@ -502,7 +508,8 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 					// helper, which emits a text tool message plus a synthetic
 					// user message holding the media.
 					mediaMessages, mediaWarnings := openai.ToolResultMediaMessages(output, toolResultPart.ToolCallID)
-					messages = append(messages, mediaMessages...)
+					messages = append(messages, mediaMessages[0])
+					pendingToolMedia = append(pendingToolMedia, mediaMessages[1:]...)
 					warnings = append(warnings, mediaWarnings...)
 				default:
 					warnings = append(warnings, fantasy.CallWarning{
@@ -513,7 +520,7 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 			}
 		}
 	}
-	return messages, warnings
+	return append(messages, pendingToolMedia...), warnings
 }
 
 // toolResultMediaUserPart maps a tool-result media output to an OpenAI chat

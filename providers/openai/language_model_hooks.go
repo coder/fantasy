@@ -293,7 +293,13 @@ func DefaultStreamProviderMetadataFunc(choice openai.ChatCompletionChoice, metad
 func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletionMessageParamUnion, []fantasy.CallWarning) {
 	var messages []openai.ChatCompletionMessageParamUnion
 	var warnings []fantasy.CallWarning
+	// All tool replies in a batch must precede synthetic user media.
+	var pendingToolMedia []openai.ChatCompletionMessageParamUnion
 	for _, msg := range prompt {
+		if msg.Role != fantasy.MessageRoleTool {
+			messages = append(messages, pendingToolMedia...)
+			pendingToolMedia = nil
+		}
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
 			var systemPromptParts []string
@@ -581,7 +587,8 @@ func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletio
 					// OpenAI Chat Completions tool messages cannot carry image
 					// or audio content directly; see ToolResultMediaMessages.
 					mediaMessages, mediaWarnings := ToolResultMediaMessages(output, toolResultPart.ToolCallID)
-					messages = append(messages, mediaMessages...)
+					messages = append(messages, mediaMessages[0])
+					pendingToolMedia = append(pendingToolMedia, mediaMessages[1:]...)
 					warnings = append(warnings, mediaWarnings...)
 				default:
 					warnings = append(warnings, fantasy.CallWarning{
@@ -592,7 +599,7 @@ func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletio
 			}
 		}
 	}
-	return messages, warnings
+	return append(messages, pendingToolMedia...), warnings
 }
 
 // ToolResultMediaMessages maps a tool-result media output to the chat
