@@ -123,6 +123,15 @@ func WithUseResponsesAPI() Option {
 	}
 }
 
+// WithoutWebSearchSources stops Responses requests with a web search tool
+// from automatically including web_search_call.action.sources, which some
+// compatible backends, such as Bedrock Mantle, reject.
+func WithoutWebSearchSources() Option {
+	return func(o *options) {
+		o.openaiOptions = append(o.openaiOptions, openai.WithoutWebSearchSources())
+	}
+}
+
 // WithResponsesAPIFunc sets a custom filter for which models use the Responses API.
 func WithResponsesAPIFunc(fn func(modelID string) bool) Option {
 	return func(o *options) {

@@ -131,7 +131,8 @@ const (
 	IncludeMessageOutputTextLogprobs IncludeType = "message.output_text.logprobs"
 	// IncludeWebSearchCallActionSources includes the URLs a web search
 	// consulted in web_search_call action.sources. Requests with a web
-	// search tool add it automatically.
+	// search tool add it automatically unless the provider was created with
+	// WithoutWebSearchSources.
 	IncludeWebSearchCallActionSources IncludeType = "web_search_call.action.sources"
 )
 
