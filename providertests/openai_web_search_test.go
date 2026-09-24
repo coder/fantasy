@@ -58,12 +58,17 @@ func TestOpenAIWebSearch(t *testing.T) {
 		// Walk the steps and verify web search content was produced.
 		var sources []fantasy.SourceContent
 		var providerToolCalls []fantasy.ToolCallContent
+		var providerToolResults []fantasy.ToolResultContent
 		for _, step := range result.Steps {
 			for _, c := range step.Content {
 				switch v := c.(type) {
 				case fantasy.ToolCallContent:
 					if v.ProviderExecuted {
 						providerToolCalls = append(providerToolCalls, v)
+					}
+				case fantasy.ToolResultContent:
+					if v.ProviderExecuted {
+						providerToolResults = append(providerToolResults, v)
 					}
 				case fantasy.SourceContent:
 					sources = append(sources, v)
@@ -73,6 +78,7 @@ func TestOpenAIWebSearch(t *testing.T) {
 
 		require.NotEmpty(t, providerToolCalls, "should have provider-executed tool calls")
 		require.Equal(t, "web_search", providerToolCalls[0].ToolName)
+		requireWebSearchActionMetadata(t, providerToolResults)
 		// Sources come from url_citation annotations; the model
 		// may or may not include inline citations so we don't
 		// require them, but if present they should have URLs.
@@ -124,5 +130,26 @@ func TestOpenAIWebSearch(t *testing.T) {
 		require.NotEmpty(t, providerToolCalls, "should have provider-executed tool calls")
 		require.Equal(t, "web_search", providerToolCalls[0].ToolName)
 		require.NotEmpty(t, providerToolResults, "should have provider-executed tool results")
+		requireWebSearchActionMetadata(t, providerToolResults)
 	})
+}
+
+// requireWebSearchActionMetadata checks that web_search results carry the
+// search queries and the consulted source URLs, which OpenAI only returns
+// when the request includes web_search_call.action.sources.
+func requireWebSearchActionMetadata(t *testing.T, results []fantasy.ToolResultContent) {
+	t.Helper()
+
+	require.NotEmpty(t, results, "should have provider-executed tool results")
+	for _, result := range results {
+		meta, ok := result.ProviderMetadata[openai.Name].(*openai.WebSearchCallMetadata)
+		require.True(t, ok, "web_search result metadata should be *openai.WebSearchCallMetadata, got %T", result.ProviderMetadata[openai.Name])
+		require.NotNil(t, meta.Action)
+		require.Equal(t, "search", meta.Action.Type)
+		require.NotEmpty(t, meta.Action.Queries, "search action should report its queries")
+		require.NotEmpty(t, meta.Action.Sources, "search action should report its consulted sources")
+		for _, source := range meta.Action.Sources {
+			require.NotEmpty(t, source.URL, "consulted source should have a URL")
+		}
+	}
 }
