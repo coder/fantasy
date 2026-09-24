@@ -18,6 +18,8 @@ var webSearchCallActionCases = []struct {
 	name   string
 	action map[string]any
 	want   *WebSearchAction
+	// wantInput is the provider-executed tool call input.
+	wantInput string
 }{
 	{
 		name: "QueriesAndSources",
@@ -37,6 +39,7 @@ var webSearchCallActionCases = []struct {
 				{Type: "url", URL: "https://developers.openai.com/api/docs/guides/tools-web-search"},
 			},
 		},
+		wantInput: `{"queries":["coder agents web search","openai responses sources"]}`,
 	},
 	{
 		name: "DeprecatedQuery",
@@ -48,6 +51,7 @@ var webSearchCallActionCases = []struct {
 			Type:  "search",
 			Query: "latest AI news",
 		},
+		wantInput: `{"queries":["latest AI news"]}`,
 	},
 	{
 		name: "NoQueries",
@@ -63,6 +67,7 @@ var webSearchCallActionCases = []struct {
 				{Type: "url", URL: "https://example.com/weather"},
 			},
 		},
+		wantInput: `{"queries":[]}`,
 	},
 }
 
@@ -157,11 +162,14 @@ func TestResponsesGenerate_WebSearchCallAction(t *testing.T) {
 			requireWebSearchSourcesInclude(t, server.calls[0].body)
 
 			var (
+				toolCalls   []fantasy.ToolCallContent
 				toolResults []fantasy.ToolResultContent
 				sources     []fantasy.SourceContent
 			)
 			for _, c := range resp.Content {
 				switch v := c.(type) {
+				case fantasy.ToolCallContent:
+					toolCalls = append(toolCalls, v)
 				case fantasy.ToolResultContent:
 					toolResults = append(toolResults, v)
 				case fantasy.SourceContent:
@@ -169,6 +177,9 @@ func TestResponsesGenerate_WebSearchCallAction(t *testing.T) {
 				}
 			}
 
+			require.Len(t, toolCalls, 1)
+			require.True(t, toolCalls[0].ProviderExecuted)
+			require.JSONEq(t, tc.wantInput, toolCalls[0].Input)
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolName)
@@ -222,10 +233,12 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			var toolResults, sources []fantasy.StreamPart
+			var toolCalls, toolResults, sources []fantasy.StreamPart
 			for part := range stream {
 				require.NotEqual(t, fantasy.StreamPartTypeError, part.Type, "unexpected stream error: %v", part.Error)
 				switch part.Type {
+				case fantasy.StreamPartTypeToolCall:
+					toolCalls = append(toolCalls, part)
 				case fantasy.StreamPartTypeToolResult:
 					toolResults = append(toolResults, part)
 				case fantasy.StreamPartTypeSource:
@@ -235,6 +248,9 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 			require.Len(t, sms.calls, 1)
 			requireWebSearchSourcesInclude(t, sms.calls[0].body)
 
+			require.Len(t, toolCalls, 1)
+			require.True(t, toolCalls[0].ProviderExecuted)
+			require.JSONEq(t, tc.wantInput, toolCalls[0].ToolCallInput)
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolCallName)
@@ -341,6 +357,47 @@ func TestResponsesStream_WebSearchCallResultWithoutTerminalEvent(t *testing.T) {
 	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, &WebSearchAction{
 		Type:    "search",
 		Queries: []string{"tokyo population"},
+	})
+}
+
+func TestResponsesStream_WebSearchCallSourcesFromFailedResponse(t *testing.T) {
+	t.Parallel()
+
+	sms := newStreamingMockServer()
+	defer sms.close()
+	sms.chunks = []string{
+		responsesSSEEvent("response.output_item.done",
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"]}}}`),
+		responsesSSEEvent("response.failed",
+			`{"type":"response.failed","response":{"id":"resp_01","status":"failed","error":{"code":"server_error","message":"boom"},"output":[`+
+				`{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"sources":[{"type":"url","url":"https://www.metro.tokyo.lg.jp/"}]}}`+
+				`]}}`),
+	}
+
+	model := newResponsesProvider(t, sms.server.URL)
+	stream, err := model.Stream(context.Background(), fantasy.Call{
+		Prompt: testPrompt,
+		Tools:  []fantasy.Tool{WebSearchTool(nil)},
+	})
+	require.NoError(t, err)
+
+	var toolResults, errs []fantasy.StreamPart
+	for part := range stream {
+		switch part.Type {
+		case fantasy.StreamPartTypeToolResult:
+			require.Empty(t, errs, "the paired result must precede the stream error")
+			toolResults = append(toolResults, part)
+		case fantasy.StreamPartTypeError:
+			errs = append(errs, part)
+		}
+	}
+
+	require.Len(t, errs, 1)
+	require.Len(t, toolResults, 1)
+	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, &WebSearchAction{
+		Type:    "search",
+		Queries: []string{"tokyo population"},
+		Sources: []WebSearchSource{{Type: "url", URL: "https://www.metro.tokyo.lg.jp/"}},
 	})
 }
 
