@@ -26,23 +26,25 @@ import (
 const topLogprobsMax = 20
 
 type responsesLanguageModel struct {
-	provider           string
-	modelID            string
-	client             openai.Client
-	objectMode         fantasy.ObjectMode
-	reasoningModelFunc func(modelID string) bool
-	headerFunc         LanguageModelHeaderFunc
+	provider             string
+	modelID              string
+	client               openai.Client
+	objectMode           fantasy.ObjectMode
+	reasoningModelFunc   func(modelID string) bool
+	headerFunc           LanguageModelHeaderFunc
+	skipWebSearchSources bool
 }
 
 // newResponsesLanguageModel implements a responses api model.
-func newResponsesLanguageModel(modelID string, provider string, client openai.Client, objectMode fantasy.ObjectMode, reasoningModelFunc func(modelID string) bool, headerFunc LanguageModelHeaderFunc) responsesLanguageModel {
+func newResponsesLanguageModel(modelID string, provider string, client openai.Client, objectMode fantasy.ObjectMode, reasoningModelFunc func(modelID string) bool, headerFunc LanguageModelHeaderFunc, skipWebSearchSources bool) responsesLanguageModel {
 	return responsesLanguageModel{
-		modelID:            modelID,
-		provider:           provider,
-		client:             client,
-		objectMode:         objectMode,
-		reasoningModelFunc: reasoningModelFunc,
-		headerFunc:         headerFunc,
+		modelID:              modelID,
+		provider:             provider,
+		client:               client,
+		objectMode:           objectMode,
+		reasoningModelFunc:   reasoningModelFunc,
+		headerFunc:           headerFunc,
+		skipWebSearchSources: skipWebSearchSources,
 	}
 }
 
@@ -396,7 +398,7 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.ToolChoice = toolChoice
 	}
 
-	if hasResponsesWebSearchTool(tools) && !slices.Contains(include, IncludeWebSearchCallActionSources) {
+	if !o.skipWebSearchSources && hasResponsesWebSearchTool(tools) && !slices.Contains(include, IncludeWebSearchCallActionSources) {
 		include = append(include, IncludeWebSearchCallActionSources)
 	}
 
