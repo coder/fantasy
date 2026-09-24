@@ -298,14 +298,6 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.Truncation = responses.ResponseNewParamsTruncationAuto
 	}
 
-	if len(include) > 0 {
-		includeParams := make([]responses.ResponseIncludable, len(include))
-		for i, inc := range include {
-			includeParams[i] = responses.ResponseIncludable(string(inc))
-		}
-		params.Include = includeParams
-	}
-
 	if modelConfig.isReasoningModel {
 		if call.Temperature != nil {
 			params.Temperature = param.Opt[float64]{}
@@ -370,6 +362,20 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 	if len(tools) > 0 {
 		params.Tools = tools
 		params.ToolChoice = toolChoice
+	}
+
+	// web_search_call items only carry action.sources, the full list of
+	// URLs the search consulted, when the request asks for them.
+	if hasResponsesWebSearchTool(tools) && !slices.Contains(include, IncludeWebSearchCallActionSources) {
+		include = append(include, IncludeWebSearchCallActionSources)
+	}
+
+	if len(include) > 0 {
+		includeParams := make([]responses.ResponseIncludable, len(include))
+		for i, inc := range include {
+			includeParams[i] = responses.ResponseIncludable(string(inc))
+		}
+		params.Include = includeParams
 	}
 
 	return params, warnings, nil
@@ -806,6 +812,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	return input, warnings, nil
 }
 
+func hasResponsesWebSearchTool(tools []responses.ToolUnionParam) bool {
+	return slices.ContainsFunc(tools, func(tool responses.ToolUnionParam) bool {
+		return tool.OfWebSearch != nil || tool.OfWebSearchPreview != nil
+	})
+}
+
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
@@ -1103,8 +1115,9 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 			// matching the vercel/ai pattern for provider tools.
 			//
 			// Note: source citations come from url_citation annotations
-			// on the message text (handled in the "message" case above),
-			// not from the web_search_call action.
+			// on the message text (handled in the "message" case above).
+			// The URLs the search consulted stay in the result metadata
+			// so callers can tell them apart from citations.
 			wsMeta := webSearchCallToMetadata(outputItem.ID, outputItem.Action)
 			content = append(content, fantasy.ToolCallContent{
 				ProviderExecuted: true,
@@ -1222,6 +1235,39 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	activeReasoning := make(map[string]*reasoningState)
 
 	return func(yield func(fantasy.StreamPart) bool) {
+		// pendingWebSearchResults holds web_search results, in call
+		// order, until a terminal event supplies the final action data.
+		var pendingWebSearchResults []*WebSearchCallMetadata
+		// flushWebSearchResults emits the pending web_search results,
+		// preferring the action data from the terminal response output
+		// over the data captured when each item finished.
+		flushWebSearchResults := func(output []responses.ResponseOutputItemUnion) bool {
+			pending := pendingWebSearchResults
+			pendingWebSearchResults = nil
+			for _, meta := range pending {
+				for _, item := range output {
+					if item.Type == "web_search_call" && item.ID == meta.ItemID {
+						meta = webSearchCallToMetadata(item.ID, item.Action)
+						break
+					}
+				}
+				// Emit a ToolResult so the agent framework includes
+				// it in round-trip messages.
+				if !yield(fantasy.StreamPart{
+					Type:             fantasy.StreamPartTypeToolResult,
+					ID:               meta.ItemID,
+					ToolCallName:     "web_search",
+					ProviderExecuted: true,
+					ProviderMetadata: fantasy.ProviderMetadata{
+						Name: meta,
+					},
+				}) {
+					return false
+				}
+			}
+			return true
+		}
+
 		if len(warnings) > 0 {
 			if !yield(fantasy.StreamPart{
 				Type:     fantasy.StreamPartTypeWarnings,
@@ -1336,9 +1382,13 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 					}
 
 				case "web_search_call":
-					// Provider-executed web search completed.
-					// Source citations come from url_citation annotations
-					// on the streamed message text, not from the action.
+					// Provider-executed web search completed. Source
+					// citations come from url_citation annotations on the
+					// streamed message text. The URLs the search consulted
+					// stay in the result metadata, and the result waits
+					// for the terminal event because this item can omit
+					// action.sources, or list only some of them, while
+					// response.completed carries the full list.
 					if !yield(fantasy.StreamPart{
 						Type: fantasy.StreamPartTypeToolInputEnd,
 						ID:   done.Item.ID,
@@ -1353,19 +1403,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 					}) {
 						return
 					}
-					// Emit a ToolResult so the agent framework
-					// includes it in round-trip messages.
-					if !yield(fantasy.StreamPart{
-						Type:             fantasy.StreamPartTypeToolResult,
-						ID:               done.Item.ID,
-						ToolCallName:     "web_search",
-						ProviderExecuted: true,
-						ProviderMetadata: fantasy.ProviderMetadata{
-							Name: webSearchCallToMetadata(done.Item.ID, done.Item.Action),
-						},
-					}) {
-						return
-					}
+					pendingWebSearchResults = append(pendingWebSearchResults, webSearchCallToMetadata(done.Item.ID, done.Item.Action))
 				case "message":
 					if !yield(fantasy.StreamPart{
 						Type: fantasy.StreamPartTypeTextEnd,
@@ -1525,6 +1563,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				responseID = completed.Response.ID
 				finishReason = mapResponsesFinishReason(completed.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(completed.Response)
+				if !flushWebSearchResults(completed.Response.Output) {
+					return
+				}
 
 			case "response.incomplete":
 				sawTerminalEvent = true
@@ -1532,9 +1573,15 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				responseID = incomplete.Response.ID
 				finishReason = mapResponsesFinishReason(incomplete.Response.IncompleteDetails.Reason, hasFunctionCall)
 				usage = responsesUsage(incomplete.Response)
+				if !flushWebSearchResults(incomplete.Response.Output) {
+					return
+				}
 
 			case "response.failed":
 				failed := event.AsResponseFailed()
+				if !flushWebSearchResults(nil) {
+					return
+				}
 				if !yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
 					Error: responsesFailedStreamError(failed.Response.Error.Message, string(failed.Response.Error.Code)),
@@ -1545,6 +1592,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 			case "error":
 				errorEvent := event.AsError()
+				if !flushWebSearchResults(nil) {
+					return
+				}
 				if !yield(fantasy.StreamPart{
 					Type:  fantasy.StreamPartTypeError,
 					Error: responsesErrorStreamError(errorEvent.Message, errorEvent.Code),
@@ -1553,6 +1603,12 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				}
 				return
 			}
+		}
+
+		// Every emitted web_search tool call keeps its paired result,
+		// even when the stream ends without a terminal event.
+		if !flushWebSearchResults(nil) {
+			return
 		}
 
 		err := stream.Err()
@@ -1645,8 +1701,9 @@ func webSearchCallToMetadata(itemID string, action responses.ResponseOutputItemU
 	meta := &WebSearchCallMetadata{ItemID: itemID}
 	if action.Type != "" {
 		a := &WebSearchAction{
-			Type:  action.Type,
-			Query: action.Query,
+			Type:    action.Type,
+			Queries: action.Queries,
+			Query:   action.Query,
 		}
 		for _, src := range action.Sources {
 			a.Sources = append(a.Sources, WebSearchSource{
