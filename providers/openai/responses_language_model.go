@@ -1123,6 +1123,7 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				ProviderExecuted: true,
 				ToolCallID:       outputItem.ID,
 				ToolName:         "web_search",
+				Input:            webSearchCallInput(outputItem.Action),
 			})
 			content = append(content, fantasy.ToolResultContent{
 				ProviderExecuted: true,
@@ -1399,6 +1400,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 						Type:             fantasy.StreamPartTypeToolCall,
 						ID:               done.Item.ID,
 						ToolCallName:     "web_search",
+						ToolCallInput:    webSearchCallInput(done.Item.Action),
 						ProviderExecuted: true,
 					}) {
 						return
@@ -1579,7 +1581,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 			case "response.failed":
 				failed := event.AsResponseFailed()
-				if !flushWebSearchResults(nil) {
+				if !flushWebSearchResults(failed.Response.Output) {
 					return
 				}
 				if !yield(fantasy.StreamPart{
@@ -1714,6 +1716,28 @@ func webSearchCallToMetadata(itemID string, action responses.ResponseOutputItemU
 		meta.Action = a
 	}
 	return meta
+}
+
+// webSearchCallInput encodes the queries of a finished web_search_call as
+// the input of its provider-executed tool call. The streamed result waits for
+// the terminal event, so the call is the first place callers can read what
+// was searched. The key is always present so callers can tell this input
+// apart from one that describes a search still to run.
+func webSearchCallInput(action responses.ResponseOutputItemUnionAction) string {
+	queries := action.Queries
+	if len(queries) == 0 && action.Query != "" {
+		queries = []string{action.Query}
+	}
+	if queries == nil {
+		queries = []string{}
+	}
+	input, err := json.Marshal(struct {
+		Queries []string `json:"queries"`
+	}{Queries: queries})
+	if err != nil {
+		return ""
+	}
+	return string(input)
 }
 
 // GetReasoningMetadata extracts reasoning metadata from provider options for responses models.
