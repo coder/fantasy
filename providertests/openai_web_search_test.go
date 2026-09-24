@@ -135,8 +135,7 @@ func TestOpenAIWebSearch(t *testing.T) {
 }
 
 // requireWebSearchActionMetadata checks that web_search results carry the
-// search queries and the consulted source URLs, which OpenAI only returns
-// when the request includes web_search_call.action.sources.
+// search queries and the consulted source URLs.
 func requireWebSearchActionMetadata(t *testing.T, results []fantasy.ToolResultContent) {
 	t.Helper()
 
