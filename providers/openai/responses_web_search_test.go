@@ -444,4 +444,59 @@ func TestResponsesWebSearchSourcesInclude(t *testing.T) {
 		requireWebSearchSourcesInclude(t, server.calls[0].body)
 		require.Contains(t, server.calls[0].body["include"], string(IncludeReasoningEncryptedContent))
 	})
+
+	newOptedOutModel := func(t *testing.T, serverURL string) fantasy.LanguageModel {
+		t.Helper()
+		provider, err := New(
+			WithAPIKey("test-api-key"),
+			WithBaseURL(serverURL),
+			WithUseResponsesAPI(),
+			WithoutWebSearchSources(),
+		)
+		require.NoError(t, err)
+		model, err := provider.LanguageModel(context.Background(), "gpt-4.1")
+		require.NoError(t, err)
+		return model
+	}
+
+	t.Run("NotRequestedWhenProviderOptsOut", func(t *testing.T) {
+		t.Parallel()
+
+		server := newMockServer()
+		defer server.close()
+		server.response = mockResponsesWebSearchResponse()
+
+		model := newOptedOutModel(t, server.server.URL)
+		_, err := model.Generate(context.Background(), fantasy.Call{
+			Prompt: testPrompt,
+			Tools:  []fantasy.Tool{WebSearchTool(nil)},
+		})
+		require.NoError(t, err)
+		require.Len(t, server.calls, 1)
+
+		include, _ := server.calls[0].body["include"].([]any)
+		require.NotContains(t, include, string(IncludeWebSearchCallActionSources))
+	})
+
+	t.Run("CallerIncludeSentWhenProviderOptsOut", func(t *testing.T) {
+		t.Parallel()
+
+		server := newMockServer()
+		defer server.close()
+		server.response = mockResponsesWebSearchResponse()
+
+		model := newOptedOutModel(t, server.server.URL)
+		_, err := model.Generate(context.Background(), fantasy.Call{
+			Prompt: testPrompt,
+			Tools:  []fantasy.Tool{WebSearchTool(nil)},
+			ProviderOptions: fantasy.ProviderOptions{
+				Name: &ResponsesProviderOptions{
+					Include: []IncludeType{IncludeWebSearchCallActionSources},
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, server.calls, 1)
+		requireWebSearchSourcesInclude(t, server.calls[0].body)
+	})
 }
