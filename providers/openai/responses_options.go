@@ -130,8 +130,8 @@ const (
 	// IncludeMessageOutputTextLogprobs includes message output text log probabilities.
 	IncludeMessageOutputTextLogprobs IncludeType = "message.output_text.logprobs"
 	// IncludeWebSearchCallActionSources includes the URLs a web search
-	// consulted in web_search_call action.sources. Requests that carry the
-	// web_search tool add it automatically.
+	// consulted in web_search_call action.sources. Requests with a web
+	// search tool add it automatically.
 	IncludeWebSearchCallActionSources IncludeType = "web_search_call.action.sources"
 )
 
@@ -395,11 +395,10 @@ type WebSearchSource struct {
 type WebSearchAction struct {
 	// Type is the kind of action: "search", "open_page", or "find".
 	Type string `json:"type"`
-	// Queries are the search queries (present when Type is "search",
-	// though OpenAI does not always report them).
+	// Queries are the search queries. OpenAI can omit them.
 	Queries []string `json:"queries,omitempty"`
-	// Query is the single search query that older responses report
-	// instead of Queries. OpenAI deprecated it in favor of Queries.
+	// Query is the deprecated single-query field that OpenAI replaced
+	// with Queries.
 	Query string `json:"query,omitempty"`
 	// Sources are the URLs the search consulted. OpenAI only returns
 	// them when the request includes web_search_call.action.sources.

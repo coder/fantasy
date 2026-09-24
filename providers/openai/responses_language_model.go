@@ -364,8 +364,6 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		params.ToolChoice = toolChoice
 	}
 
-	// web_search_call items only carry action.sources, the full list of
-	// URLs the search consulted, when the request asks for them.
 	if hasResponsesWebSearchTool(tools) && !slices.Contains(include, IncludeWebSearchCallActionSources) {
 		include = append(include, IncludeWebSearchCallActionSources)
 	}
@@ -1237,7 +1235,8 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 	return func(yield func(fantasy.StreamPart) bool) {
 		// pendingWebSearchResults holds web_search results, in call
-		// order, until a terminal event supplies the final action data.
+		// order, until a terminal event. response.output_item.done can
+		// omit action.sources or list fewer than the terminal response.
 		var pendingWebSearchResults []*WebSearchCallMetadata
 		// flushWebSearchResults emits the pending web_search results,
 		// preferring the action data from the terminal response output
@@ -1383,13 +1382,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 					}
 
 				case "web_search_call":
-					// Provider-executed web search completed. Source
-					// citations come from url_citation annotations on the
-					// streamed message text. The URLs the search consulted
-					// stay in the result metadata, and the result waits
-					// for the terminal event because this item can omit
-					// action.sources, or list only some of them, while
-					// response.completed carries the full list.
+					// Provider-executed web search completed.
+					// Source citations come from url_citation annotations
+					// on the streamed message text, not from the action.
 					if !yield(fantasy.StreamPart{
 						Type: fantasy.StreamPartTypeToolInputEnd,
 						ID:   done.Item.ID,
@@ -1719,10 +1714,9 @@ func webSearchCallToMetadata(itemID string, action responses.ResponseOutputItemU
 }
 
 // webSearchCallInput encodes the queries of a finished web_search_call as
-// the input of its provider-executed tool call. The streamed result waits for
-// the terminal event, so the call is the first place callers can read what
-// was searched. The key is always present so callers can tell this input
-// apart from one that describes a search still to run.
+// its tool call input, because the streamed result arrives only with the
+// terminal event. The queries key is present even when empty, so callers can
+// tell a finished search from one still to run.
 func webSearchCallInput(action responses.ResponseOutputItemUnionAction) string {
 	queries := action.Queries
 	if len(queries) == 0 && action.Query != "" {

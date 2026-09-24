@@ -15,10 +15,9 @@ import (
 // older responses with the deprecated single query, and searches that
 // report no query at all.
 var webSearchCallActionCases = []struct {
-	name   string
-	action map[string]any
-	want   *WebSearchAction
-	// wantInput is the provider-executed tool call input.
+	name      string
+	action    map[string]any
+	want      *WebSearchAction
 	wantInput string
 }{
 	{
