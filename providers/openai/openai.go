@@ -38,6 +38,7 @@ type options struct {
 	sdkOptions           []option.RequestOption
 	objectMode           fantasy.ObjectMode
 	languageModelOptions []LanguageModelOption
+	skipWebSearchSources bool
 }
 
 // Option defines a function that configures OpenAI provider options.
@@ -136,6 +137,16 @@ func WithUseResponsesAPI() Option {
 	}
 }
 
+// WithoutWebSearchSources stops Responses requests with a web search tool
+// from automatically including web_search_call.action.sources. Use it for
+// Responses-compatible backends that reject that include, such as Bedrock
+// Mantle. A caller can still request it through ResponsesProviderOptions.Include.
+func WithoutWebSearchSources() Option {
+	return func(o *options) {
+		o.skipWebSearchSources = true
+	}
+}
+
 // WithResponsesAPIFunc sets a custom filter for which models use the Responses API.
 // When set, this function is called instead of the default IsResponsesModel().
 func WithResponsesAPIFunc(fn func(modelID string) bool) Option {
@@ -204,7 +215,7 @@ func (o *provider) LanguageModel(_ context.Context, modelID string) (fantasy.Lan
 		if objectMode == fantasy.ObjectModeJSON {
 			objectMode = fantasy.ObjectModeAuto
 		}
-		return newResponsesLanguageModel(modelID, o.options.name, client, objectMode, o.options.reasoningModelFunc), nil
+		return newResponsesLanguageModel(modelID, o.options.name, client, objectMode, o.options.reasoningModelFunc, o.options.skipWebSearchSources), nil
 	}
 
 	languageModelOptions := append([]LanguageModelOption{}, o.options.languageModelOptions...)
