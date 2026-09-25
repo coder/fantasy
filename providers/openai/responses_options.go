@@ -129,8 +129,8 @@ const (
 	IncludeFileSearchCallResults IncludeType = "file_search_call.results"
 	// IncludeMessageOutputTextLogprobs includes message output text log probabilities.
 	IncludeMessageOutputTextLogprobs IncludeType = "message.output_text.logprobs"
-	// IncludeWebSearchCallActionSources includes the URLs a web search
-	// consulted in web_search_call action.sources. Requests with a web
+	// IncludeWebSearchCallActionSources includes the pages a web search
+	// found in web_search_call action.sources. Requests with a web
 	// search tool add it automatically unless the provider was created with
 	// WithoutWebSearchSources.
 	IncludeWebSearchCallActionSources IncludeType = "web_search_call.action.sources"
