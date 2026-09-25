@@ -11,14 +11,15 @@ import (
 )
 
 // webSearchCallActionCases covers the web_search_call action shapes
-// OpenAI returns: current responses with queries and consulted sources,
-// older responses with the deprecated single query, and searches that
-// report no query at all.
+// OpenAI returns: searches with queries and found pages, older responses
+// with the deprecated single query, searches that report no query, and the
+// open_page and find_in_page actions of reasoning models.
 var webSearchCallActionCases = []struct {
 	name      string
 	action    map[string]any
 	want      *WebSearchAction
 	wantInput string
+	wantFound []string
 }{
 	{
 		name: "QueriesAndSources",
@@ -38,7 +39,8 @@ var webSearchCallActionCases = []struct {
 				{Type: "url", URL: "https://developers.openai.com/api/docs/guides/tools-web-search"},
 			},
 		},
-		wantInput: `{"queries":["coder agents web search","openai responses sources"]}`,
+		wantInput: `{"type":"search","queries":["coder agents web search","openai responses sources"]}`,
+		wantFound: []string{"https://coder.com/docs/ai-coder", "https://developers.openai.com/api/docs/guides/tools-web-search"},
 	},
 	{
 		name: "DeprecatedQuery",
@@ -50,7 +52,7 @@ var webSearchCallActionCases = []struct {
 			Type:  "search",
 			Query: "latest AI news",
 		},
-		wantInput: `{"queries":["latest AI news"]}`,
+		wantInput: `{"type":"search","queries":["latest AI news"]}`,
 	},
 	{
 		name: "NoQueries",
@@ -66,16 +68,44 @@ var webSearchCallActionCases = []struct {
 				{Type: "url", URL: "https://example.com/weather"},
 			},
 		},
-		wantInput: `{"queries":[]}`,
+		wantInput: `{"type":"search"}`,
+		wantFound: []string{"https://example.com/weather"},
+	},
+	{
+		name: "OpenPage",
+		action: map[string]any{
+			"type": "open_page",
+			"url":  "https://go.dev/dl/",
+		},
+		want: &WebSearchAction{
+			Type: "open_page",
+			URL:  "https://go.dev/dl/",
+		},
+		wantInput: `{"type":"open_page","url":"https://go.dev/dl/"}`,
+	},
+	{
+		name: "FindInPage",
+		action: map[string]any{
+			"type":    "find_in_page",
+			"url":     "https://go.dev/doc/devel/release",
+			"pattern": "go1.27",
+		},
+		want: &WebSearchAction{
+			Type:    "find_in_page",
+			URL:     "https://go.dev/doc/devel/release",
+			Pattern: "go1.27",
+		},
+		wantInput: `{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}`,
 	},
 }
 
-func requireWebSearchCallMetadata(t *testing.T, metadata fantasy.ProviderMetadata, want *WebSearchAction) {
+func requireWebSearchCallMetadata(t *testing.T, metadata fantasy.ProviderMetadata, wantStatus string, want *WebSearchAction) {
 	t.Helper()
 
 	wsMeta, ok := metadata[Name].(*WebSearchCallMetadata)
 	require.True(t, ok, "metadata should be *WebSearchCallMetadata, got %T", metadata[Name])
 	require.Equal(t, "ws_01", wsMeta.ItemID)
+	require.Equal(t, wantStatus, wsMeta.Status)
 	require.Equal(t, want, wsMeta.Action)
 
 	// Callers persist the metadata as JSON and read it back on later
@@ -182,11 +212,21 @@ func TestResponsesGenerate_WebSearchCallAction(t *testing.T) {
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolName)
-			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, tc.want)
+			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "completed", tc.want)
 
-			// Consulted sources must not become citation sources.
-			require.Len(t, sources, 1)
-			require.Equal(t, "https://example.com/cited", sources[0].URL)
+			var found, cited []string
+			for _, source := range sources {
+				switch source.ToolCallID {
+				case "ws_01":
+					found = append(found, source.URL)
+				case "":
+					cited = append(cited, source.URL)
+				default:
+					t.Fatalf("source %q tagged with unknown tool call %q", source.URL, source.ToolCallID)
+				}
+			}
+			require.Equal(t, tc.wantFound, found)
+			require.Equal(t, []string{"https://example.com/cited"}, cited)
 		})
 	}
 }
@@ -253,37 +293,50 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolCallName)
-			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, tc.want)
+			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "completed", tc.want)
 
-			// Consulted sources must not become citation sources.
-			require.Len(t, sources, 1)
-			require.Equal(t, "https://example.com/cited", sources[0].URL)
+			var found, cited []string
+			for _, source := range sources {
+				switch source.SourceToolCallID {
+				case "ws_01":
+					found = append(found, source.URL)
+				case "":
+					cited = append(cited, source.URL)
+				default:
+					t.Fatalf("source %q tagged with unknown tool call %q", source.URL, source.SourceToolCallID)
+				}
+			}
+			require.Equal(t, tc.wantFound, found)
+			require.Equal(t, []string{"https://example.com/cited"}, cited)
 		})
 	}
 }
 
-// TestResponsesStream_WebSearchCallSourcesFromCompletedResponse covers the
-// recorded OpenAI behavior where response.output_item.done omits
-// action.sources and only response.completed lists them.
-func TestResponsesStream_WebSearchCallSourcesFromCompletedResponse(t *testing.T) {
+// TestResponsesStream_WebSearchCallFinishesWithItem covers live OpenAI
+// streams: a search's found pages are on its output_item.done, and the final
+// response summary also lists pages the answer cited among them. The search
+// finishes, with its own pages, before the answer streams.
+func TestResponsesStream_WebSearchCallFinishesWithItem(t *testing.T) {
 	t.Parallel()
 
 	sms := newStreamingMockServer()
 	defer sms.close()
 	sms.chunks = []string{
 		responsesSSEEvent("response.output_item.added",
-			`{"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"in_progress","action":{"type":"search"}}}`),
+			`{"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"in_progress"}}`),
 		responsesSSEEvent("response.output_item.done",
-			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"query":"tokyo population"}}}`),
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"sources":[{"type":"url","url":"https://www.metro.tokyo.lg.jp/"}]}}}`),
 		responsesSSEEvent("response.output_item.added",
 			`{"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_01","role":"assistant","status":"in_progress","content":[]}}`),
 		responsesSSEEvent("response.output_text.delta",
 			`{"type":"response.output_text.delta","item_id":"msg_01","output_index":1,"content_index":0,"delta":"About 14 million."}`),
+		responsesSSEEvent("response.output_text.annotation.added",
+			`{"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://example.com/tokyo","title":"Tokyo","start_index":0,"end_index":5},"annotation_index":0,"content_index":0,"item_id":"msg_01","output_index":1}`),
 		responsesSSEEvent("response.output_item.done",
 			`{"type":"response.output_item.done","output_index":1,"item":{"type":"message","id":"msg_01","role":"assistant","status":"completed","content":[{"type":"output_text","text":"About 14 million.","annotations":[]}]}}`),
 		responsesSSEEvent("response.completed",
 			`{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[`+
-				`{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"query":"tokyo population","sources":[{"type":"url","url":"https://www.metro.tokyo.lg.jp/"},{"type":"url","url":"https://example.com/tokyo"}]}},`+
+				`{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"sources":[{"type":"url","url":"https://www.metro.tokyo.lg.jp/"},{"type":"url","url":"https://example.com/tokyo"}]}},`+
 				`{"type":"message","id":"msg_01","role":"assistant","status":"completed","content":[{"type":"output_text","text":"About 14 million.","annotations":[]}]}`+
 				`],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`),
 	}
@@ -296,107 +349,56 @@ func TestResponsesStream_WebSearchCallSourcesFromCompletedResponse(t *testing.T)
 	require.NoError(t, err)
 
 	var types []fantasy.StreamPartType
-	var toolResults []fantasy.StreamPart
+	var found, cited []string
 	for part := range stream {
 		require.NotEqual(t, fantasy.StreamPartTypeError, part.Type, "unexpected stream error: %v", part.Error)
 		types = append(types, part.Type)
+		if part.Type == fantasy.StreamPartTypeSource {
+			if part.SourceToolCallID == "ws_01" {
+				found = append(found, part.URL)
+			} else {
+				cited = append(cited, part.URL)
+			}
+		}
+	}
+
+	require.Less(t, slices.Index(types, fantasy.StreamPartTypeToolCall), slices.Index(types, fantasy.StreamPartTypeSource))
+	require.Less(t, slices.Index(types, fantasy.StreamPartTypeToolResult), slices.Index(types, fantasy.StreamPartTypeTextDelta))
+	require.Equal(t, []string{"https://www.metro.tokyo.lg.jp/"}, found)
+	require.Equal(t, []string{"https://example.com/tokyo"}, cited)
+}
+
+func TestResponsesStream_WebSearchCallFailedStatus(t *testing.T) {
+	t.Parallel()
+
+	sms := newStreamingMockServer()
+	defer sms.close()
+	sms.chunks = []string{
+		responsesSSEEvent("response.output_item.done",
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"failed","action":{"type":"search","queries":["tokyo population"]}}}`),
+		responsesSSEEvent("response.completed",
+			`{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`),
+	}
+
+	model := newResponsesProvider(t, sms.server.URL)
+	stream, err := model.Stream(context.Background(), fantasy.Call{
+		Prompt: testPrompt,
+		Tools:  []fantasy.Tool{WebSearchTool(nil)},
+	})
+	require.NoError(t, err)
+
+	var toolResults []fantasy.StreamPart
+	for part := range stream {
+		require.NotEqual(t, fantasy.StreamPartTypeError, part.Type, "unexpected stream error: %v", part.Error)
 		if part.Type == fantasy.StreamPartTypeToolResult {
 			toolResults = append(toolResults, part)
 		}
 	}
 
-	// The call keeps its position ahead of the answer text; the
-	// result follows once the terminal event arrives.
-	require.Less(t, slices.Index(types, fantasy.StreamPartTypeToolCall), slices.Index(types, fantasy.StreamPartTypeTextDelta))
-	require.Less(t, slices.Index(types, fantasy.StreamPartTypeTextDelta), slices.Index(types, fantasy.StreamPartTypeToolResult))
-	require.Less(t, slices.Index(types, fantasy.StreamPartTypeToolResult), slices.Index(types, fantasy.StreamPartTypeFinish))
-
 	require.Len(t, toolResults, 1)
-	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, &WebSearchAction{
+	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "failed", &WebSearchAction{
 		Type:    "search",
 		Queries: []string{"tokyo population"},
-		Query:   "tokyo population",
-		Sources: []WebSearchSource{
-			{Type: "url", URL: "https://www.metro.tokyo.lg.jp/"},
-			{Type: "url", URL: "https://example.com/tokyo"},
-		},
-	})
-}
-
-func TestResponsesStream_WebSearchCallResultWithoutTerminalEvent(t *testing.T) {
-	t.Parallel()
-
-	sms := newStreamingMockServer()
-	defer sms.close()
-	sms.chunks = []string{
-		responsesSSEEvent("response.output_item.done",
-			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"]}}}`),
-	}
-
-	model := newResponsesProvider(t, sms.server.URL)
-	stream, err := model.Stream(context.Background(), fantasy.Call{
-		Prompt: testPrompt,
-		Tools:  []fantasy.Tool{WebSearchTool(nil)},
-	})
-	require.NoError(t, err)
-
-	var toolResults, errs []fantasy.StreamPart
-	for part := range stream {
-		switch part.Type {
-		case fantasy.StreamPartTypeToolResult:
-			require.Empty(t, errs, "the paired result must precede the stream error")
-			toolResults = append(toolResults, part)
-		case fantasy.StreamPartTypeError:
-			errs = append(errs, part)
-		}
-	}
-
-	require.Len(t, errs, 1)
-	require.Len(t, toolResults, 1)
-	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, &WebSearchAction{
-		Type:    "search",
-		Queries: []string{"tokyo population"},
-	})
-}
-
-func TestResponsesStream_WebSearchCallSourcesFromFailedResponse(t *testing.T) {
-	t.Parallel()
-
-	sms := newStreamingMockServer()
-	defer sms.close()
-	sms.chunks = []string{
-		responsesSSEEvent("response.output_item.done",
-			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"]}}}`),
-		responsesSSEEvent("response.failed",
-			`{"type":"response.failed","response":{"id":"resp_01","status":"failed","error":{"code":"server_error","message":"boom"},"output":[`+
-				`{"type":"web_search_call","id":"ws_01","status":"completed","action":{"type":"search","queries":["tokyo population"],"sources":[{"type":"url","url":"https://www.metro.tokyo.lg.jp/"}]}}`+
-				`]}}`),
-	}
-
-	model := newResponsesProvider(t, sms.server.URL)
-	stream, err := model.Stream(context.Background(), fantasy.Call{
-		Prompt: testPrompt,
-		Tools:  []fantasy.Tool{WebSearchTool(nil)},
-	})
-	require.NoError(t, err)
-
-	var toolResults, errs []fantasy.StreamPart
-	for part := range stream {
-		switch part.Type {
-		case fantasy.StreamPartTypeToolResult:
-			require.Empty(t, errs, "the paired result must precede the stream error")
-			toolResults = append(toolResults, part)
-		case fantasy.StreamPartTypeError:
-			errs = append(errs, part)
-		}
-	}
-
-	require.Len(t, errs, 1)
-	require.Len(t, toolResults, 1)
-	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, &WebSearchAction{
-		Type:    "search",
-		Queries: []string{"tokyo population"},
-		Sources: []WebSearchSource{{Type: "url", URL: "https://www.metro.tokyo.lg.jp/"}},
 	})
 }
 
