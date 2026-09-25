@@ -312,10 +312,12 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 	}
 }
 
-// TestResponsesStream_WebSearchCallFinishesWithItem covers live OpenAI
-// streams: a search's found pages are on its output_item.done, and the final
-// response summary also lists pages the answer cited among them. The search
-// finishes, with its own pages, before the answer streams.
+// TestResponsesStream_WebSearchCallFinishesWithItem covers live gpt-4.1-mini
+// and gpt-5-mini streams: a search's found pages are on its output_item.done,
+// and the final response summary also lists pages the answer cited among
+// them. gpt-4.1 search items carried no pages, and its summary listed only
+// cited pages. The search finishes, with its own pages, before the answer
+// streams.
 func TestResponsesStream_WebSearchCallFinishesWithItem(t *testing.T) {
 	t.Parallel()
 
