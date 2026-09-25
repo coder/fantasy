@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"net/http"
 	"os"
+	"slices"
 	"testing"
 
 	"charm.land/fantasy"
@@ -78,10 +79,7 @@ func TestOpenAIWebSearch(t *testing.T) {
 
 		require.NotEmpty(t, providerToolCalls, "should have provider-executed tool calls")
 		require.Equal(t, "web_search", providerToolCalls[0].ToolName)
-		requireWebSearchActionMetadata(t, providerToolResults)
-		// Sources come from url_citation annotations; the model
-		// may or may not include inline citations so we don't
-		// require them, but if present they should have URLs.
+		requireWebSearchActionMetadata(t, providerToolResults, sources)
 		for _, src := range sources {
 			require.NotEmpty(t, src.URL, "source should have a URL")
 		}
@@ -113,6 +111,7 @@ func TestOpenAIWebSearch(t *testing.T) {
 		// Verify provider-executed tool calls and results in steps.
 		var providerToolCalls []fantasy.ToolCallContent
 		var providerToolResults []fantasy.ToolResultContent
+		var sources []fantasy.SourceContent
 		for _, step := range result.Steps {
 			for _, c := range step.Content {
 				switch v := c.(type) {
@@ -124,19 +123,23 @@ func TestOpenAIWebSearch(t *testing.T) {
 					if v.ProviderExecuted {
 						providerToolResults = append(providerToolResults, v)
 					}
+				case fantasy.SourceContent:
+					sources = append(sources, v)
 				}
 			}
 		}
 		require.NotEmpty(t, providerToolCalls, "should have provider-executed tool calls")
 		require.Equal(t, "web_search", providerToolCalls[0].ToolName)
 		require.NotEmpty(t, providerToolResults, "should have provider-executed tool results")
-		requireWebSearchActionMetadata(t, providerToolResults)
+		requireWebSearchActionMetadata(t, providerToolResults, sources)
 	})
 }
 
 // requireWebSearchActionMetadata checks that web_search results carry the
-// search queries and the consulted source URLs.
-func requireWebSearchActionMetadata(t *testing.T, results []fantasy.ToolResultContent) {
+// search queries, and that every page a search found is a source tagged
+// with that search's ID. The recorded gpt-4.1 stream reports no found pages
+// on its search item, so found pages are not required.
+func requireWebSearchActionMetadata(t *testing.T, results []fantasy.ToolResultContent, sources []fantasy.SourceContent) {
 	t.Helper()
 
 	require.NotEmpty(t, results, "should have provider-executed tool results")
@@ -146,9 +149,10 @@ func requireWebSearchActionMetadata(t *testing.T, results []fantasy.ToolResultCo
 		require.NotNil(t, meta.Action)
 		require.Equal(t, "search", meta.Action.Type)
 		require.NotEmpty(t, meta.Action.Queries, "search action should report its queries")
-		require.NotEmpty(t, meta.Action.Sources, "search action should report its consulted sources")
-		for _, source := range meta.Action.Sources {
-			require.NotEmpty(t, source.URL, "consulted source should have a URL")
+		for _, found := range meta.Action.Sources {
+			require.True(t, slices.ContainsFunc(sources, func(source fantasy.SourceContent) bool {
+				return source.URL == found.URL && source.ToolCallID == meta.ItemID
+			}), "found page %q should be a source tagged with %q", found.URL, meta.ItemID)
 		}
 	}
 }
