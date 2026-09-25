@@ -1629,6 +1629,7 @@ func (a *agent) processStepStream(ctx context.Context, stream StreamResponse, op
 				ID:               part.ID,
 				URL:              part.URL,
 				Title:            part.Title,
+				ToolCallID:       part.SourceToolCallID,
 				ProviderMetadata: part.ProviderMetadata,
 			}
 			stepContent = append(stepContent, sourceContent)
