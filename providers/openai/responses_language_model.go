@@ -569,9 +569,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
-			// lastEmittedReasoning is set only when the emitted reasoning
-			// item permits a following hosted web search item reference.
-			lastEmittedReasoning := false
+			canReferenceWebSearch := false
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -584,7 +582,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					input = append(input, responses.ResponseInputItemParamOfMessage(textPart.Text, responses.EasyInputMessageRoleAssistant))
-					lastEmittedReasoning = false
+					canReferenceWebSearch = false
 
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
@@ -597,12 +595,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					if toolCallPart.ProviderExecuted {
-						if store && lastEmittedReasoning &&
+						if store && canReferenceWebSearch &&
 							isResponsesWebSearchToolCall(toolCallPart) &&
 							toolCallPart.ToolCallID != "" {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
 						}
-						lastEmittedReasoning = false
+						canReferenceWebSearch = false
 						continue
 					}
 
@@ -617,13 +615,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(toolCallPart.Input, toolCallPart.ToolCallID, toolCallPart.ToolName))
-					lastEmittedReasoning = false
+					canReferenceWebSearch = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					lastEmittedReasoning = false
+					canReferenceWebSearch = false
 					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
 					if !ok {
 						warnings = append(warnings, fantasy.CallWarning{
@@ -645,9 +643,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						// content cannot be resolved by the API.
 						continue
 					}
-					// Legacy unfinalized metadata predates provenance and
-					// keeps its prior behavior.
-					lastEmittedReasoning = !meta.Finalized || meta.SourceStoreEnabled
+					// Item-reference replay predates source storage metadata.
+					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
 					continue
 				}
 			}

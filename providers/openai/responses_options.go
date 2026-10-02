@@ -101,9 +101,8 @@ type ResponsesReasoningMetadata struct {
 	// item. Only finalized encrypted content is replayed inline; streaming
 	// placeholders and metadata persisted before this field existed are not.
 	Finalized bool `json:"finalized,omitempty"`
-	// SourceStoreEnabled records whether the response that produced this
-	// item was stored. Web search calls from unstored responses cannot be
-	// replayed as item references even when the replaying request stores.
+	// SourceStoreEnabled records the source request's store setting, so
+	// unstored search items are not referenced after storage is enabled.
 	SourceStoreEnabled bool `json:"source_store_enabled,omitempty"`
 }
 
