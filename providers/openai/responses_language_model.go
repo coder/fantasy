@@ -569,6 +569,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
+			// lastEmittedReasoning is set only when the emitted reasoning
+			// item permits a following hosted web search item reference.
 			lastEmittedReasoning := false
 			for _, c := range msg.Content {
 				switch c.GetType() {
@@ -643,7 +645,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						// content cannot be resolved by the API.
 						continue
 					}
-					lastEmittedReasoning = true
+					// Legacy unfinalized metadata predates provenance and
+					// keeps its prior behavior.
+					lastEmittedReasoning = !meta.Finalized || meta.SourceStoreEnabled
 					continue
 				}
 			}
@@ -822,11 +826,12 @@ func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.Re
 	return item, true
 }
 
-func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion) *ResponsesReasoningMetadata {
+func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion, sourceStoreEnabled bool) *ResponsesReasoningMetadata {
 	metadata := &ResponsesReasoningMetadata{
-		ItemID:    item.ID,
-		Summary:   make([]string, 0, len(item.Summary)),
-		Finalized: true,
+		ItemID:             item.ID,
+		Summary:            make([]string, 0, len(item.Summary)),
+		Finalized:          true,
+		SourceStoreEnabled: sourceStoreEnabled,
 	}
 	if item.EncryptedContent != "" {
 		metadata.EncryptedContent = &item.EncryptedContent
@@ -1176,7 +1181,7 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				},
 			})
 		case "reasoning":
-			metadata := finalResponsesReasoningMetadata(outputItem)
+			metadata := finalResponsesReasoningMetadata(outputItem, params.Store.Value)
 			if len(metadata.Summary) == 0 && metadata.EncryptedContent == nil {
 				continue
 			}
@@ -1433,7 +1438,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 							Type: fantasy.StreamPartTypeReasoningEnd,
 							ID:   done.Item.ID,
 							ProviderMetadata: fantasy.ProviderMetadata{
-								Name: finalResponsesReasoningMetadata(done.Item),
+								Name: finalResponsesReasoningMetadata(done.Item, params.Store.Value),
 							},
 						}) {
 							return

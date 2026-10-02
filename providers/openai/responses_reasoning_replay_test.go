@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"charm.land/fantasy"
@@ -126,6 +127,9 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		encrypted *string
 		summary   []string
 		webSearch bool
+		// sourceStore is the store setting of the response that produced
+		// the reasoning item.
+		sourceStore bool
 		// want is the reasoning input item; nil means none is sent.
 		want map[string]any
 	}{
@@ -160,7 +164,15 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 			name: "no blob store false",
 		},
 		{
-			name:      "store true before web search",
+			name:        "store true before web search",
+			store:       true,
+			encrypted:   new("enc-final"),
+			webSearch:   true,
+			sourceStore: true,
+			want:        fullItem(),
+		},
+		{
+			name:      "store true before web search from unstored source",
 			store:     true,
 			encrypted: new("enc-final"),
 			webSearch: true,
@@ -174,16 +186,20 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 			wantNext := map[string]any{"type": "function_call", "call_id": "call_1"}
 			if tc.webSearch {
 				next = fantasy.ToolCallPart{ToolCallID: "ws_1", ToolName: "web_search", ProviderExecuted: true}
-				wantNext = map[string]any{"id": "ws_1"}
+				wantNext = map[string]any{"role": "assistant", "content": "a"}
+				if tc.sourceStore {
+					wantNext = map[string]any{"id": "ws_1"}
+				}
 			}
 			prompt := fantasy.Prompt{
 				{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "q"}}},
 				{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
 					fantasy.ReasoningPart{ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesReasoningMetadata{
-						ItemID:           "rs_1",
-						EncryptedContent: tc.encrypted,
-						Summary:          tc.summary,
-						Finalized:        true,
+						ItemID:             "rs_1",
+						EncryptedContent:   tc.encrypted,
+						Summary:            tc.summary,
+						Finalized:          true,
+						SourceStoreEnabled: tc.sourceStore,
 					}}},
 					next,
 					fantasy.TextPart{Text: "a"},
@@ -219,5 +235,105 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 				require.Equal(t, value, item[key], "reasoning must stay immediately before %v", wantNext)
 			}
 		})
+	}
+}
+
+// Web search calls from an unstored response cannot be referenced by a later
+// stored request, so only the inline reasoning item is replayed.
+func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
+	t.Parallel()
+
+	sourceReasoning := map[string]func(t *testing.T, store bool) fantasy.ProviderMetadata{
+		"generate": func(t *testing.T, store bool) fantasy.ProviderMetadata {
+			server := newMockServer()
+			defer server.close()
+			server.response = map[string]any{
+				"id":     "resp_1",
+				"object": "response",
+				"model":  "gpt-4.1",
+				"status": "completed",
+				"output": []any{
+					map[string]any{"type": "reasoning", "id": "rs_1", "encrypted_content": "enc-final", "summary": []any{}},
+					map[string]any{"type": "web_search_call", "id": "ws_1", "status": "completed", "action": map[string]any{"type": "search", "query": "q"}},
+				},
+				"usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+			}
+			resp, err := newResponsesProvider(t, server.server.URL).Generate(context.Background(), fantasy.Call{
+				Prompt:          testPrompt,
+				ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesProviderOptions{Store: new(store)}},
+			})
+			require.NoError(t, err)
+			reasoning := resp.Content.Reasoning()
+			require.Len(t, reasoning, 1)
+			return reasoning[0].ProviderMetadata
+		},
+		"stream": func(t *testing.T, store bool) fantasy.ProviderMetadata {
+			sms := newStreamingMockServer()
+			defer sms.close()
+			sms.chunks = []string{
+				responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"enc-added","summary":[]}}`),
+				responsesSSEEvent("response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"enc-final","summary":[]}}`),
+				responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":1,"item":{"id":"ws_1","type":"web_search_call","status":"in_progress"}}`),
+				responsesSSEEvent("response.output_item.done", `{"type":"response.output_item.done","output_index":1,"item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"q"}}}`),
+				responsesSSEEvent("response.completed", `{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`),
+			}
+			stream, err := newResponsesProvider(t, sms.server.URL).Stream(context.Background(), fantasy.Call{
+				Prompt:          testPrompt,
+				ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesProviderOptions{Store: new(store)}},
+			})
+			require.NoError(t, err)
+			var metadata fantasy.ProviderMetadata
+			for part := range stream {
+				require.NotEqual(t, fantasy.StreamPartTypeError, part.Type, "unexpected stream error: %v", part.Error)
+				if part.Type == fantasy.StreamPartTypeReasoningEnd {
+					metadata = part.ProviderMetadata
+				}
+			}
+			require.NotNil(t, metadata)
+			return metadata
+		},
+	}
+
+	for source, reasoningMetadata := range sourceReasoning {
+		for _, sourceStore := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s source store %t", source, sourceStore), func(t *testing.T) {
+				t.Parallel()
+
+				metadata := reasoningMetadata(t, sourceStore)
+				meta := GetReasoningMetadata(fantasy.ProviderOptions(metadata))
+				require.NotNil(t, meta)
+				require.Equal(t, sourceStore, meta.SourceStoreEnabled)
+
+				server := newMockServer()
+				defer server.close()
+				server.response = mockResponsesWebSearchResponse()
+				_, err := newResponsesProvider(t, server.server.URL).Generate(context.Background(), fantasy.Call{
+					Prompt: fantasy.Prompt{
+						{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "q"}}},
+						{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+							fantasy.ReasoningPart{ProviderOptions: fantasy.ProviderOptions(metadata)},
+							fantasy.ToolCallPart{ToolCallID: "ws_1", ToolName: "web_search", ProviderExecuted: true},
+							fantasy.TextPart{Text: "a"},
+						}},
+					},
+					ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesProviderOptions{Store: new(true)}},
+				})
+				require.NoError(t, err)
+
+				require.Len(t, server.calls, 1)
+				input, ok := server.calls[0].body["input"].([]any)
+				require.True(t, ok)
+				want := []any{
+					map[string]any{"type": "reasoning", "id": "rs_1", "summary": []any{}, "encrypted_content": "enc-final"},
+				}
+				if sourceStore {
+					want = append(want, map[string]any{"id": "ws_1"})
+				}
+				require.Equal(t, want, input[1:len(want)+1])
+				next, ok := input[len(want)+1].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "assistant", next["role"])
+			})
+		}
 	}
 }
