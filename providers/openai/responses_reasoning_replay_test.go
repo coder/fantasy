@@ -103,6 +103,7 @@ func TestResponsesGenerate_ReasoningMetadataIsFinalized(t *testing.T) {
 	require.NotNil(t, meta)
 	require.True(t, meta.Finalized)
 	require.Equal(t, "enc-final", *meta.EncryptedContent)
+	require.Empty(t, meta.Summary)
 }
 
 func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
@@ -140,7 +141,7 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		{
 			name:      "empty summary store false",
 			encrypted: new("enc-final"),
-			summary:   []string{""},
+			summary:   []string{},
 			want:      fullItem(),
 		},
 		{

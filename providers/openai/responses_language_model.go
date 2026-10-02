@@ -809,20 +809,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	return input, warnings, nil
 }
 
-// responsesReasoningInputItem returns the full reasoning input item for
-// metadata copied from a completed reasoning output item.
 func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.ResponseInputItemUnionParam, bool) {
 	if !meta.Finalized || meta.EncryptedContent == nil || *meta.EncryptedContent == "" {
 		return responses.ResponseInputItemUnionParam{}, false
 	}
 	summary := make([]responses.ResponseReasoningItemSummaryParam, 0, len(meta.Summary))
 	for _, text := range meta.Summary {
-		// Generate pads an empty summary with "" so encrypted-only
-		// reasoning still yields a content part; that padding is not
-		// part of the provider item.
-		if text == "" {
-			continue
-		}
 		summary = append(summary, responses.ResponseReasoningItemSummaryParam{Text: text})
 	}
 	item := responses.ResponseInputItemParamOfReasoning(meta.ItemID, summary)
@@ -830,8 +822,6 @@ func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.Re
 	return item, true
 }
 
-// finalResponsesReasoningMetadata copies replay data from a completed
-// reasoning output item.
 func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion) *ResponsesReasoningMetadata {
 	metadata := &ResponsesReasoningMetadata{
 		ItemID:    item.ID,
@@ -1189,11 +1179,6 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 			metadata := finalResponsesReasoningMetadata(outputItem)
 			if len(metadata.Summary) == 0 && metadata.EncryptedContent == nil {
 				continue
-			}
-
-			// When there are no summary parts, add an empty reasoning part
-			if len(metadata.Summary) == 0 {
-				metadata.Summary = []string{""}
 			}
 
 			content = append(content, fantasy.ReasoningContent{
