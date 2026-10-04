@@ -2,7 +2,7 @@ package openai
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"testing"
 
 	"charm.land/fantasy"
@@ -243,8 +243,9 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
 	t.Parallel()
 
-	sourceReasoning := map[string]func(t *testing.T, store bool) fantasy.ProviderMetadata{
-		"generate": func(t *testing.T, store bool) fantasy.ProviderMetadata {
+	// storeEcho is the raw JSON store value the response echoes; empty omits it.
+	sourceReasoning := map[string]func(t *testing.T, store bool, storeEcho string) fantasy.ProviderMetadata{
+		"generate": func(t *testing.T, store bool, storeEcho string) fantasy.ProviderMetadata {
 			server := newMockServer()
 			defer server.close()
 			server.response = map[string]any{
@@ -258,6 +259,9 @@ func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
 				},
 				"usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
 			}
+			if storeEcho != "" {
+				server.response["store"] = json.RawMessage(storeEcho)
+			}
 			resp, err := newResponsesProvider(t, server.server.URL).Generate(context.Background(), fantasy.Call{
 				Prompt:          testPrompt,
 				ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesProviderOptions{Store: new(store)}},
@@ -267,10 +271,15 @@ func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
 			require.Len(t, reasoning, 1)
 			return reasoning[0].ProviderMetadata
 		},
-		"stream": func(t *testing.T, store bool) fantasy.ProviderMetadata {
+		"stream": func(t *testing.T, store bool, storeEcho string) fantasy.ProviderMetadata {
 			sms := newStreamingMockServer()
 			defer sms.close()
+			created := `{"id":"resp_1","status":"in_progress","output":[]`
+			if storeEcho != "" {
+				created += `,"store":` + storeEcho
+			}
 			sms.chunks = []string{
+				responsesSSEEvent("response.created", `{"type":"response.created","response":`+created+`}}`),
 				responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"enc-added","summary":[]}}`),
 				responsesSSEEvent("response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"enc-final","summary":[]}}`),
 				responsesSSEEvent("response.output_item.added", `{"type":"response.output_item.added","output_index":1,"item":{"id":"ws_1","type":"web_search_call","status":"in_progress"}}`),
@@ -295,14 +304,25 @@ func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
 	}
 
 	for source, reasoningMetadata := range sourceReasoning {
-		for _, sourceStore := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s source store %t", source, sourceStore), func(t *testing.T) {
+		for _, tc := range []struct {
+			name           string
+			requestedStore bool
+			storeEcho      string
+			sourceStore    bool
+		}{
+			{name: "store false"},
+			{name: "store true", requestedStore: true, sourceStore: true},
+			{name: "store true echoed true", requestedStore: true, storeEcho: "true", sourceStore: true},
+			{name: "store true echoed false", requestedStore: true, storeEcho: "false"},
+			{name: "store false echoed true", storeEcho: "true"},
+		} {
+			t.Run(source+" "+tc.name, func(t *testing.T) {
 				t.Parallel()
 
-				metadata := reasoningMetadata(t, sourceStore)
+				metadata := reasoningMetadata(t, tc.requestedStore, tc.storeEcho)
 				meta := GetReasoningMetadata(fantasy.ProviderOptions(metadata))
 				require.NotNil(t, meta)
-				require.Equal(t, sourceStore, meta.SourceStoreEnabled)
+				require.Equal(t, tc.sourceStore, meta.SourceStoreEnabled)
 
 				server := newMockServer()
 				defer server.close()
@@ -326,7 +346,7 @@ func TestResponsesReplay_WebSearchReferenceRequiresStoredSource(t *testing.T) {
 				want := []any{
 					map[string]any{"type": "reasoning", "id": "rs_1", "summary": []any{}, "encrypted_content": "enc-final"},
 				}
-				if sourceStore {
+				if tc.sourceStore {
 					want = append(want, map[string]any{"id": "ws_1"})
 				}
 				require.Equal(t, want, input[1:len(want)+1])

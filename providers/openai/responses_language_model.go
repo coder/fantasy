@@ -839,6 +839,11 @@ func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion, sou
 	return metadata
 }
 
+// OpenAI echoes store=false for zero data retention organizations.
+func effectiveResponseStore(requested bool, response *responses.Response) bool {
+	return requested && response.JSON.ExtraFields["store"].Raw() != "false"
+}
+
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
@@ -1178,7 +1183,7 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				},
 			})
 		case "reasoning":
-			metadata := finalResponsesReasoningMetadata(outputItem, params.Store.Value)
+			metadata := finalResponsesReasoningMetadata(outputItem, effectiveResponseStore(params.Store.Value, response))
 			if len(metadata.Summary) == 0 && metadata.EncryptedContent == nil {
 				continue
 			}
@@ -1241,6 +1246,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	ongoingToolCalls := make(map[int64]*ongoingToolCall)
 	hasFunctionCall := false
 	activeReasoning := make(map[string]*reasoningState)
+	sourceStoreEnabled := params.Store.Value
 
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
@@ -1259,6 +1265,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			case "response.created":
 				created := event.AsResponseCreated()
 				responseID = created.Response.ID
+				sourceStoreEnabled = effectiveResponseStore(sourceStoreEnabled, &created.Response)
 
 			case "response.output_item.added":
 				added := event.AsResponseOutputItemAdded()
@@ -1435,7 +1442,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 							Type: fantasy.StreamPartTypeReasoningEnd,
 							ID:   done.Item.ID,
 							ProviderMetadata: fantasy.ProviderMetadata{
-								Name: finalResponsesReasoningMetadata(done.Item, params.Store.Value),
+								Name: finalResponsesReasoningMetadata(done.Item, sourceStoreEnabled),
 							},
 						}) {
 							return
