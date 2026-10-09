@@ -1726,6 +1726,49 @@ func TestToPrompt_WebSearchProviderExecutedErrorRoundTrip(t *testing.T) {
 	require.Equal(t, "I was unable to search.", assistantMsg.Content[2].OfText.Text)
 }
 
+func TestToPrompt_WebSearchNoResultsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleUser,
+			Content: []fantasy.MessagePart{
+				fantasy.TextPart{Text: "Search for the latest AI news"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID:       "srvtoolu_empty",
+					ToolName:         "web_search",
+					Input:            `{"query":"latest AI news"}`,
+					ProviderExecuted: true,
+				},
+				fantasy.ToolResultPart{
+					ToolCallID:       "srvtoolu_empty",
+					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchResultMetadata{},
+					},
+				},
+				fantasy.TextPart{Text: "The search found nothing."},
+			},
+		},
+	}
+
+	_, messages, warnings := toPrompt(prompt, true)
+	require.Empty(t, warnings)
+	require.Len(t, messages, 2)
+
+	webResult := messages[1].Content[1].OfWebSearchToolResult
+	require.NotNil(t, webResult)
+	require.Equal(t, "srvtoolu_empty", webResult.ToolUseID)
+	require.Nil(t, webResult.Content.OfRequestWebSearchToolResultError)
+	require.NotNil(t, webResult.Content.OfWebSearchToolResultBlockItem)
+	require.Empty(t, webResult.Content.OfWebSearchToolResultBlockItem)
+}
+
 func TestToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	t.Parallel()
 
@@ -2200,6 +2243,59 @@ func TestGenerate_WebSearchErrorPreservesErrorCode(t *testing.T) {
 	require.Empty(t, webMeta.Results)
 	require.Len(t, texts, 1)
 	require.Equal(t, "I was unable to search.", texts[0].Text)
+}
+
+func TestGenerate_WebSearchNoResultsKeepsMetadata(t *testing.T) {
+	t.Parallel()
+
+	response := mockAnthropicWebSearchErrorResponse()
+	response["content"] = []any{
+		map[string]any{
+			"type":  "server_tool_use",
+			"id":    "srvtoolu_empty",
+			"name":  "web_search",
+			"input": map[string]any{"query": "latest AI news"},
+		},
+		map[string]any{
+			"type":        "web_search_tool_result",
+			"tool_use_id": "srvtoolu_empty",
+			"content":     []any{},
+		},
+		map[string]any{"type": "text", "text": "The search found nothing."},
+	}
+	server, calls := newAnthropicJSONServer(response)
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	resp, err := model.Generate(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools: []fantasy.Tool{
+			WebSearchTool(nil),
+		},
+	})
+	require.NoError(t, err)
+	_ = awaitAnthropicCall(t, calls)
+
+	var toolResults []fantasy.ToolResultContent
+	for _, c := range resp.Content {
+		require.NotEqual(t, fantasy.ContentTypeSource, c.GetType())
+		if v, ok := c.(fantasy.ToolResultContent); ok {
+			toolResults = append(toolResults, v)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	require.Equal(t, "srvtoolu_empty", toolResults[0].ToolCallID)
+	webMeta := requireWebSearchResultMetadata(t, toolResults[0].ProviderMetadata)
+	require.Empty(t, webMeta.ErrorCode)
+	require.Empty(t, webMeta.Results)
 }
 
 func TestGenerate_WebSearchToolInRequest(t *testing.T) {
@@ -2739,6 +2835,63 @@ func TestStream_WebSearchErrorPreservesErrorCode(t *testing.T) {
 	require.Equal(t, "web_search", toolResults[0].ToolCallName)
 	webMeta := requireWebSearchResultMetadata(t, toolResults[0].ProviderMetadata)
 	require.Equal(t, "max_uses_exceeded", webMeta.ErrorCode)
+	require.Empty(t, webMeta.Results)
+}
+
+// A search that finds nothing still carries metadata, so consumers can tell
+// it apart from a result that cannot be replayed.
+func TestStream_WebSearchNoResultsKeepsMetadata(t *testing.T) {
+	t.Parallel()
+
+	chunks := []string{
+		"event: message_start\n",
+		`data: {"type":"message_start","message":{"id":"msg_01WebSearchEmpty","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"usage":{"input_tokens":100,"output_tokens":0}}}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_empty","name":"web_search","input":{}}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":0}` + "\n\n",
+		"event: content_block_start\n",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_empty","content":[]}}` + "\n\n",
+		"event: content_block_stop\n",
+		`data: {"type":"content_block_stop","index":1}` + "\n\n",
+		"event: message_stop\n",
+		`data: {"type":"message_stop"}` + "\n\n",
+	}
+
+	server, calls := newAnthropicStreamingServer(chunks)
+	defer server.Close()
+
+	provider, err := New(
+		WithAPIKey("test-api-key"),
+		WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	model, err := provider.LanguageModel(context.Background(), "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	stream, err := model.Stream(context.Background(), fantasy.Call{
+		Prompt: testPrompt(),
+		Tools: []fantasy.Tool{
+			WebSearchTool(nil),
+		},
+	})
+	require.NoError(t, err)
+
+	var toolResults []fantasy.StreamPart
+	stream(func(part fantasy.StreamPart) bool {
+		require.NotEqual(t, fantasy.StreamPartTypeSource, part.Type)
+		if part.Type == fantasy.StreamPartTypeToolResult {
+			toolResults = append(toolResults, part)
+		}
+		return true
+	})
+	_ = awaitAnthropicCall(t, calls)
+
+	require.Len(t, toolResults, 1)
+	require.Equal(t, "srvtoolu_empty", toolResults[0].ID)
+	webMeta := requireWebSearchResultMetadata(t, toolResults[0].ProviderMetadata)
+	require.Empty(t, webMeta.ErrorCode)
 	require.Empty(t, webMeta.Results)
 }
 

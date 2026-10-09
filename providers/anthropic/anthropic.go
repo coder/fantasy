@@ -1682,6 +1682,12 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 						ErrorCode: string(webSearchResult.Content.ErrorCode),
 					},
 				}
+			} else {
+				// A search that found nothing still needs metadata, or it
+				// reads as a result that cannot be replayed.
+				toolResult.ProviderMetadata = fantasy.ProviderMetadata{
+					Name: &WebSearchResultMetadata{},
+				}
 			}
 			content = append(content, toolResult)
 		}
@@ -1877,6 +1883,10 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 							Name: &WebSearchResultMetadata{
 								ErrorCode: string(contentBlock.Content.ErrorCode),
 							},
+						}
+					} else {
+						providerMeta = fantasy.ProviderMetadata{
+							Name: &WebSearchResultMetadata{},
 						}
 					}
 					if !yield(fantasy.StreamPart{
