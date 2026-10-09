@@ -14,6 +14,7 @@ import (
 const (
 	TypeResponsesProviderMetadata  = Name + ".responses.metadata"
 	TypeResponsesProviderOptions   = Name + ".responses.options"
+	TypeResponsesTextMetadata      = Name + ".responses.text_metadata"
 	TypeResponsesReasoningMetadata = Name + ".responses.reasoning_metadata"
 	TypeWebSearchCallMetadata      = Name + ".responses.web_search_call_metadata"
 )
@@ -29,6 +30,13 @@ func init() {
 	})
 	fantasy.RegisterProviderType(TypeResponsesProviderOptions, func(data []byte) (fantasy.ProviderOptionsData, error) {
 		var v ResponsesProviderOptions
+		if err := json.Unmarshal(data, &v); err != nil {
+			return nil, err
+		}
+		return &v, nil
+	})
+	fantasy.RegisterProviderType(TypeResponsesTextMetadata, func(data []byte) (fantasy.ProviderOptionsData, error) {
+		var v ResponsesTextMetadata
 		if err := json.Unmarshal(data, &v); err != nil {
 			return nil, err
 		}
@@ -89,6 +97,34 @@ func (m *ResponsesProviderMetadata) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*m = ResponsesProviderMetadata(p)
+	return nil
+}
+
+// ResponsesTextMetadata identifies the output message a text part came from.
+// Phase labels the message as intermediate commentary or the final answer
+// on models that send it, and is replayed on follow-up requests.
+type ResponsesTextMetadata struct {
+	ItemID string `json:"item_id"`
+	Phase  string `json:"phase,omitempty"`
+}
+
+// Options implements the ProviderOptions interface.
+func (*ResponsesTextMetadata) Options() {}
+
+// MarshalJSON implements custom JSON marshaling with type info for ResponsesTextMetadata.
+func (m ResponsesTextMetadata) MarshalJSON() ([]byte, error) {
+	type plain ResponsesTextMetadata
+	return fantasy.MarshalProviderType(TypeResponsesTextMetadata, plain(m))
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling with type info for ResponsesTextMetadata.
+func (m *ResponsesTextMetadata) UnmarshalJSON(data []byte) error {
+	type plain ResponsesTextMetadata
+	var p plain
+	if err := fantasy.UnmarshalProviderType(data, &p); err != nil {
+		return err
+	}
+	*m = ResponsesTextMetadata(p)
 	return nil
 }
 
