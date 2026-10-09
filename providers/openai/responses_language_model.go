@@ -569,7 +569,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
-			lastEmittedReasoningReference := false
+			canReferenceWebSearch := false
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -582,7 +582,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					input = append(input, responses.ResponseInputItemParamOfMessage(textPart.Text, responses.EasyInputMessageRoleAssistant))
-					lastEmittedReasoningReference = false
+					canReferenceWebSearch = false
 
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
@@ -595,12 +595,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					if toolCallPart.ProviderExecuted {
-						if store && lastEmittedReasoningReference &&
+						if store && canReferenceWebSearch &&
 							isResponsesWebSearchToolCall(toolCallPart) &&
 							toolCallPart.ToolCallID != "" {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
 						}
-						lastEmittedReasoningReference = false
+						canReferenceWebSearch = false
 						continue
 					}
 
@@ -615,18 +615,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(toolCallPart.Input, toolCallPart.ToolCallID, toolCallPart.ToolName))
-					lastEmittedReasoningReference = false
+					canReferenceWebSearch = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					lastEmittedReasoningReference = false
-					if !store {
-						// When store is disabled, server-side reasoning
-						// items are ephemeral and cannot be referenced.
-						continue
-					}
+					canReferenceWebSearch = false
 					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
 					if !ok {
 						warnings = append(warnings, fantasy.CallWarning{
@@ -639,8 +634,17 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					if meta == nil || meta.ItemID == "" {
 						continue
 					}
-					input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
-					lastEmittedReasoningReference = true
+					if item, ok := responsesReasoningInputItem(meta); ok {
+						input = append(input, item)
+					} else if store {
+						input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
+					} else {
+						// Unstored reasoning without finalized encrypted
+						// content cannot be resolved by the API.
+						continue
+					}
+					// Item-reference replay predates source storage metadata.
+					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
 					continue
 				}
 			}
@@ -806,6 +810,40 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	return input, warnings, nil
 }
 
+func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.ResponseInputItemUnionParam, bool) {
+	if !meta.Finalized || meta.EncryptedContent == nil || *meta.EncryptedContent == "" {
+		return responses.ResponseInputItemUnionParam{}, false
+	}
+	summary := make([]responses.ResponseReasoningItemSummaryParam, 0, len(meta.Summary))
+	for _, text := range meta.Summary {
+		summary = append(summary, responses.ResponseReasoningItemSummaryParam{Text: text})
+	}
+	item := responses.ResponseInputItemParamOfReasoning(meta.ItemID, summary)
+	item.OfReasoning.EncryptedContent = param.NewOpt(*meta.EncryptedContent)
+	return item, true
+}
+
+func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion, sourceStoreEnabled bool) *ResponsesReasoningMetadata {
+	metadata := &ResponsesReasoningMetadata{
+		ItemID:             item.ID,
+		Summary:            make([]string, 0, len(item.Summary)),
+		Finalized:          true,
+		SourceStoreEnabled: sourceStoreEnabled,
+	}
+	if item.EncryptedContent != "" {
+		metadata.EncryptedContent = &item.EncryptedContent
+	}
+	for _, s := range item.Summary {
+		metadata.Summary = append(metadata.Summary, s.Text)
+	}
+	return metadata
+}
+
+// OpenAI echoes store=false for zero data retention organizations.
+func effectiveResponseStore(requested bool, response *responses.Response) bool {
+	return requested && response.JSON.ExtraFields["store"].Raw() != "false"
+}
+
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
@@ -902,6 +940,10 @@ func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) er
 func validateResponsesItemReferences(input responses.ResponseInputParam) error {
 	previousReferenceID := ""
 	for _, item := range input {
+		if item.OfReasoning != nil {
+			previousReferenceID = item.OfReasoning.ID
+			continue
+		}
 		if item.OfItemReference == nil {
 			previousReferenceID = ""
 			continue
@@ -923,7 +965,7 @@ func hasVisibleResponsesUserContent(content responses.ResponseInputMessageConten
 func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnionParam, startIdx int) bool {
 	// Check if we added any assistant content parts from this message
 	for i := startIdx; i < len(items); i++ {
-		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfComputerCall != nil {
+		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil {
 			return true
 		}
 	}
@@ -1141,25 +1183,9 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				},
 			})
 		case "reasoning":
-			metadata := &ResponsesReasoningMetadata{
-				ItemID: outputItem.ID,
-			}
-			if outputItem.EncryptedContent != "" {
-				metadata.EncryptedContent = &outputItem.EncryptedContent
-			}
-
-			if len(outputItem.Summary) == 0 && metadata.EncryptedContent == nil {
+			metadata := finalResponsesReasoningMetadata(outputItem, effectiveResponseStore(params.Store.Value, response))
+			if len(metadata.Summary) == 0 && metadata.EncryptedContent == nil {
 				continue
-			}
-
-			// When there are no summary parts, add an empty reasoning part
-			summaries := outputItem.Summary
-			if len(summaries) == 0 {
-				summaries = []responses.ResponseReasoningItemSummary{{Type: "summary_text", Text: ""}}
-			}
-
-			for _, s := range summaries {
-				metadata.Summary = append(metadata.Summary, s.Text)
 			}
 
 			content = append(content, fantasy.ReasoningContent{
@@ -1220,6 +1246,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	ongoingToolCalls := make(map[int64]*ongoingToolCall)
 	hasFunctionCall := false
 	activeReasoning := make(map[string]*reasoningState)
+	sourceStoreEnabled := params.Store.Value
 
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
@@ -1238,6 +1265,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			case "response.created":
 				created := event.AsResponseCreated()
 				responseID = created.Response.ID
+				sourceStoreEnabled = effectiveResponseStore(sourceStoreEnabled, &created.Response)
 
 			case "response.output_item.added":
 				added := event.AsResponseOutputItemAdded()
@@ -1408,11 +1436,13 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 				case "reasoning":
 					state := activeReasoning[done.Item.ID]
 					if state != nil {
+						// The completed item owns replay data; the added
+						// item can carry placeholder encrypted content.
 						if !yield(fantasy.StreamPart{
 							Type: fantasy.StreamPartTypeReasoningEnd,
 							ID:   done.Item.ID,
 							ProviderMetadata: fantasy.ProviderMetadata{
-								Name: state.metadata,
+								Name: finalResponsesReasoningMetadata(done.Item, sourceStoreEnabled),
 							},
 						}) {
 							return

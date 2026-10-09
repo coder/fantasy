@@ -97,6 +97,13 @@ type ResponsesReasoningMetadata struct {
 	ItemID           string   `json:"item_id"`
 	EncryptedContent *string  `json:"encrypted_content"`
 	Summary          []string `json:"summary"`
+	// Finalized marks metadata copied from the completed reasoning output
+	// item. Only finalized encrypted content is replayed inline; streaming
+	// placeholders and metadata persisted before this field existed are not.
+	Finalized bool `json:"finalized,omitempty"`
+	// SourceStoreEnabled records the source request's store setting, so
+	// unstored search items are not referenced after storage is enabled.
+	SourceStoreEnabled bool `json:"source_store_enabled,omitempty"`
 }
 
 // Options implements the ProviderOptions interface.
