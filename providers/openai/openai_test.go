@@ -4598,15 +4598,15 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// With store=true the reasoning item is replayed as an
-		// item_reference so any following provider-executed item
-		// pairs correctly. Order: user, item_reference(rs_*),
-		// assistant text, user.
+		// Unfinalized metadata (stream placeholders or rows persisted
+		// before Finalized existed) falls back to an item_reference with
+		// store=true. Order: user, item_reference(rs_*), assistant text,
+		// user.
 		require.Len(t, input, 4)
 
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning,
-				"reasoning items must not appear inline when store=true")
+				"unfinalized reasoning must not be replayed inline")
 		}
 
 		require.NotNil(t, input[1].OfItemReference,
@@ -4666,7 +4666,8 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// With store=false: user, assistant text, follow-up user.
+		// Unfinalized metadata is skipped with store=false: user,
+		// assistant text, follow-up user.
 		require.Len(t, input, 3)
 
 		for _, item := range input {
