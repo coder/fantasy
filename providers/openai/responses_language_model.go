@@ -581,7 +581,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						})
 						continue
 					}
-					input = append(input, responses.ResponseInputItemParamOfMessage(textPart.Text, responses.EasyInputMessageRoleAssistant))
+					message := responses.ResponseInputItemParamOfMessage(textPart.Text, responses.EasyInputMessageRoleAssistant)
+					// Resend the phase whether or not items are stored: models
+					// that label messages degrade when follow-ups drop it.
+					if metadata, ok := textPart.ProviderOptions[Name].(*ResponsesTextMetadata); ok && metadata != nil {
+						message.OfMessage.Phase = responses.EasyInputMessagePhase(metadata.Phase)
+					}
+					input = append(input, message)
 					canReferenceWebSearch = false
 
 				case fantasy.ContentTypeToolCall:
@@ -1097,7 +1103,8 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 			for _, contentPart := range outputItem.Content {
 				if contentPart.Type == "output_text" {
 					content = append(content, fantasy.TextContent{
-						Text: contentPart.Text,
+						Text:             contentPart.Text,
+						ProviderMetadata: responsesTextMetadata(outputItem.ID, outputItem.Phase),
 					})
 
 					for _, annotation := range contentPart.Annotations {
@@ -1309,8 +1316,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 				case "message":
 					if !yield(fantasy.StreamPart{
-						Type: fantasy.StreamPartTypeTextStart,
-						ID:   added.Item.ID,
+						Type:             fantasy.StreamPartTypeTextStart,
+						ID:               added.Item.ID,
+						ProviderMetadata: responsesTextMetadata(added.Item.ID, added.Item.Phase),
 					}) {
 						return
 					}
@@ -1396,8 +1404,9 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 					}
 				case "message":
 					if !yield(fantasy.StreamPart{
-						Type: fantasy.StreamPartTypeTextEnd,
-						ID:   done.Item.ID,
+						Type:             fantasy.StreamPartTypeTextEnd,
+						ID:               done.Item.ID,
+						ProviderMetadata: responsesTextMetadata(done.Item.ID, done.Item.Phase),
 					}) {
 						return
 					}
@@ -1687,6 +1696,12 @@ func webSearchCallToMetadata(itemID string, action responses.ResponseOutputItemU
 		meta.Action = a
 	}
 	return meta
+}
+
+func responsesTextMetadata(itemID string, phase responses.ResponseOutputMessagePhase) fantasy.ProviderMetadata {
+	return fantasy.ProviderMetadata{
+		Name: &ResponsesTextMetadata{ItemID: itemID, Phase: string(phase)},
+	}
 }
 
 // GetReasoningMetadata extracts reasoning metadata from provider options for responses models.
