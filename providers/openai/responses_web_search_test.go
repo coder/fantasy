@@ -13,14 +13,18 @@ import (
 // webSearchCallActionCases covers the web_search_call action shapes
 // OpenAI returns: searches with queries and found pages, older responses
 // with the deprecated single query, searches that report no query, and the
-// open_page and find_in_page actions of reasoning models.
-var webSearchCallActionCases = []struct {
+// open_page and find_in_page actions of reasoning models. Status defaults
+// to "completed".
+type webSearchCallActionCase struct {
 	name      string
+	status    string
 	action    map[string]any
 	want      *WebSearchAction
 	wantInput string
 	wantFound []string
-}{
+}
+
+var webSearchCallActionCases = []webSearchCallActionCase{
 	{
 		name: "QueriesAndSources",
 		action: map[string]any{
@@ -97,6 +101,26 @@ var webSearchCallActionCases = []struct {
 		},
 		wantInput: `{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}`,
 	},
+	{
+		name:   "Failed",
+		status: "failed",
+		action: map[string]any{
+			"type":    "search",
+			"queries": []any{"tokyo population"},
+		},
+		want: &WebSearchAction{
+			Type:    "search",
+			Queries: []string{"tokyo population"},
+		},
+		wantInput: `{"type":"search","queries":["tokyo population"]}`,
+	},
+}
+
+func (tc webSearchCallActionCase) itemStatus() string {
+	if tc.status == "" {
+		return "completed"
+	}
+	return tc.status
 }
 
 func requireWebSearchCallMetadata(t *testing.T, metadata fantasy.ProviderMetadata, wantStatus string, want *WebSearchAction) {
@@ -153,7 +177,7 @@ func TestResponsesGenerate_WebSearchCallAction(t *testing.T) {
 					map[string]any{
 						"type":   "web_search_call",
 						"id":     "ws_01",
-						"status": "completed",
+						"status": tc.itemStatus(),
 						"action": tc.action,
 					},
 					map[string]any{
@@ -212,7 +236,7 @@ func TestResponsesGenerate_WebSearchCallAction(t *testing.T) {
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolName)
-			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "completed", tc.want)
+			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, tc.itemStatus(), tc.want)
 
 			var found, cited []string
 			for _, source := range sources {
@@ -241,7 +265,7 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 			item, err := json.Marshal(map[string]any{
 				"type":   "web_search_call",
 				"id":     "ws_01",
-				"status": "completed",
+				"status": tc.itemStatus(),
 				"action": tc.action,
 			})
 			require.NoError(t, err)
@@ -293,7 +317,7 @@ func TestResponsesStream_WebSearchCallAction(t *testing.T) {
 			require.Len(t, toolResults, 1)
 			require.True(t, toolResults[0].ProviderExecuted)
 			require.Equal(t, "web_search", toolResults[0].ToolCallName)
-			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "completed", tc.want)
+			requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, tc.itemStatus(), tc.want)
 
 			var found, cited []string
 			for _, source := range sources {
@@ -368,40 +392,6 @@ func TestResponsesStream_WebSearchCallFinishesWithItem(t *testing.T) {
 	require.Less(t, slices.Index(types, fantasy.StreamPartTypeToolResult), slices.Index(types, fantasy.StreamPartTypeTextDelta))
 	require.Equal(t, []string{"https://www.metro.tokyo.lg.jp/"}, found)
 	require.Equal(t, []string{"https://example.com/tokyo"}, cited)
-}
-
-func TestResponsesStream_WebSearchCallFailedStatus(t *testing.T) {
-	t.Parallel()
-
-	sms := newStreamingMockServer()
-	defer sms.close()
-	sms.chunks = []string{
-		responsesSSEEvent("response.output_item.done",
-			`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_01","status":"failed","action":{"type":"search","queries":["tokyo population"]}}}`),
-		responsesSSEEvent("response.completed",
-			`{"type":"response.completed","response":{"id":"resp_01","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`),
-	}
-
-	model := newResponsesProvider(t, sms.server.URL)
-	stream, err := model.Stream(context.Background(), fantasy.Call{
-		Prompt: testPrompt,
-		Tools:  []fantasy.Tool{WebSearchTool(nil)},
-	})
-	require.NoError(t, err)
-
-	var toolResults []fantasy.StreamPart
-	for part := range stream {
-		require.NotEqual(t, fantasy.StreamPartTypeError, part.Type, "unexpected stream error: %v", part.Error)
-		if part.Type == fantasy.StreamPartTypeToolResult {
-			toolResults = append(toolResults, part)
-		}
-	}
-
-	require.Len(t, toolResults, 1)
-	requireWebSearchCallMetadata(t, toolResults[0].ProviderMetadata, "failed", &WebSearchAction{
-		Type:    "search",
-		Queries: []string{"tokyo population"},
-	})
 }
 
 func TestResponsesWebSearchSourcesInclude(t *testing.T) {
