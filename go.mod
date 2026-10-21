@@ -82,7 +82,7 @@ require (
 	github.com/kaptinlin/go-i18n v0.4.9 // indirect
 	github.com/kaptinlin/jsonpointer v0.4.25 // indirect
 	github.com/kaptinlin/messageformat-go v0.6.4 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
