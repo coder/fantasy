@@ -2,7 +2,9 @@ package fantasy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 )
 
 // ProviderOptionsData is an interface for provider-specific options data.
@@ -311,14 +313,29 @@ func (t ToolResultOutputContentError) GetType() ToolResultContentType {
 
 // ToolResultOutputContentMedia represents media output content of a tool result.
 type ToolResultOutputContentMedia struct {
-	Data      string `json:"data"`           // for media type (base64)
-	MediaType string `json:"media_type"`     // for media type
-	Text      string `json:"text,omitempty"` // optional text content accompanying the media
+	Data      string `json:"data"`               // for media type (base64)
+	MediaType string `json:"media_type"`         // for media type
+	Text      string `json:"text,omitempty"`     // optional text content accompanying the media
+	Filename  string `json:"filename,omitempty"` // optional filename of the media
 }
 
 // GetType returns the type of the tool result output content media.
 func (t ToolResultOutputContentMedia) GetType() ToolResultContentType {
 	return ToolResultContentTypeMedia
+}
+
+// FilePart converts the media to a FilePart so that providers can convert
+// tool-result media with the same rules as user files.
+func (t ToolResultOutputContentMedia) FilePart() (FilePart, error) {
+	data, err := base64.StdEncoding.DecodeString(t.Data)
+	if err != nil {
+		return FilePart{}, fmt.Errorf("decode tool result media data: %w", err)
+	}
+	return FilePart{
+		Filename:  t.Filename,
+		Data:      data,
+		MediaType: t.MediaType,
+	}, nil
 }
 
 // AsToolResultOutputType converts a ToolResultOutputContent interface to a specific type.

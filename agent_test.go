@@ -1935,7 +1935,7 @@ func TestAgent_MediaToolResponses(t *testing.T) {
 		require.Equal(t, "audio/wav", mediaResult.MediaType)
 	})
 
-	t.Run("Media response with text", func(t *testing.T) {
+	t.Run("Media response with text and filename", func(t *testing.T) {
 		t.Parallel()
 
 		imageTool := &mockTool{
@@ -1944,6 +1944,7 @@ func TestAgent_MediaToolResponses(t *testing.T) {
 			executeFunc: func(ctx context.Context, call ToolCall) (ToolResponse, error) {
 				resp := NewImageResponse(imageData, "image/png")
 				resp.Content = "Screenshot captured successfully"
+				resp.Filename = "screenshot.png"
 				return resp, nil
 			},
 		}
@@ -1988,6 +1989,7 @@ func TestAgent_MediaToolResponses(t *testing.T) {
 		require.Equal(t, base64.StdEncoding.EncodeToString(imageData), mediaResult.Data)
 		require.Equal(t, "image/png", mediaResult.MediaType)
 		require.Equal(t, "Screenshot captured successfully", mediaResult.Text)
+		require.Equal(t, "screenshot.png", mediaResult.Filename)
 	})
 
 	t.Run("Media response preserves metadata", func(t *testing.T) {
