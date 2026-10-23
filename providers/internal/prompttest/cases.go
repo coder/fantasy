@@ -308,6 +308,24 @@ func Cases() []Case {
 			},
 		},
 		{
+			// A PDF result converts with the user file rules: a file part
+			// that keeps the tool's filename, in the deferred user message.
+			Name:  "tool_result_media_pdf",
+			Model: "gpt-4o",
+			Prompt: fantasy.Prompt{
+				{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{ToolCallID: "c1", ToolName: "read", Input: "{}"},
+				}},
+				{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{ToolCallID: "c1", Output: fantasy.ToolResultOutputContentMedia{
+						Data:      b64([]byte("%PDF-1.4")),
+						MediaType: "application/pdf",
+						Filename:  "report.pdf",
+					}},
+				}},
+			},
+		},
+		{
 			// An unsupported media type still has to answer the tool_call, so
 			// the text message goes out alone with a warning naming the type.
 			Name:  "tool_result_media_unsupported",
@@ -320,6 +338,24 @@ func Cases() []Case {
 					fantasy.ToolResultPart{ToolCallID: "c1", Output: fantasy.ToolResultOutputContentMedia{
 						Data:      b64([]byte{1, 2, 3}),
 						MediaType: "video/mp4",
+					}},
+				}},
+			},
+		},
+		{
+			// Accompanying text is kept, and the notice follows it, so the
+			// model does not assume it saw the media the text describes.
+			Name:  "tool_result_media_unsupported_with_text",
+			Model: "gpt-4o",
+			Prompt: fantasy.Prompt{
+				{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{ToolCallID: "c1", ToolName: "record", Input: "{}"},
+				}},
+				{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{ToolCallID: "c1", Output: fantasy.ToolResultOutputContentMedia{
+						Data:      b64([]byte{1, 2, 3}),
+						MediaType: "video/mp4",
+						Text:      "Recording of the session.",
 					}},
 				}},
 			},
