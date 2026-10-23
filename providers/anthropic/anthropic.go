@@ -1221,38 +1221,20 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							if !ok {
 								continue
 							}
+							image, document, warning := fileBlock(file)
 							switch {
-							case strings.HasPrefix(file.MediaType, "image/"):
-								base64Encoded := base64.StdEncoding.EncodeToString(file.Data)
-								imageBlock := anthropic.NewImageBlockBase64(file.MediaType, base64Encoded)
+							case warning != nil:
+								warnings = append(warnings, *warning)
+							case image != nil:
 								if cacheControl != nil {
-									imageBlock.OfImage.CacheControl = anthropic.NewCacheControlEphemeralParam()
+									image.CacheControl = anthropic.NewCacheControlEphemeralParam()
 								}
-								anthropicContent = append(anthropicContent, imageBlock)
-							case file.MediaType == "application/pdf":
-								base64Encoded := base64.StdEncoding.EncodeToString(file.Data)
-								docBlock := anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
-									Data: base64Encoded,
-								})
-								docBlock.OfDocument.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
+								anthropicContent = append(anthropicContent, anthropic.ContentBlockParamUnion{OfImage: image})
+							case document != nil:
 								if cacheControl != nil {
-									docBlock.OfDocument.CacheControl = anthropic.NewCacheControlEphemeralParam()
+									document.CacheControl = anthropic.NewCacheControlEphemeralParam()
 								}
-								anthropicContent = append(anthropicContent, docBlock)
-							case strings.HasPrefix(file.MediaType, "text/"):
-								documentBlock := anthropic.NewDocumentBlock(anthropic.PlainTextSourceParam{
-									Data: string(file.Data),
-								})
-								documentBlock.OfDocument.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
-								if cacheControl != nil {
-									documentBlock.OfDocument.CacheControl = anthropic.NewCacheControlEphemeralParam()
-								}
-								anthropicContent = append(anthropicContent, documentBlock)
-							default:
-								warnings = append(warnings, fantasy.CallWarning{
-									Type:    fantasy.CallWarningTypeOther,
-									Message: fmt.Sprintf("file part media type %s not supported", file.MediaType),
-								})
+								anthropicContent = append(anthropicContent, anthropic.ContentBlockParamUnion{OfDocument: document})
 							}
 						}
 					}
@@ -1288,17 +1270,9 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							if !ok {
 								continue
 							}
-							contentBlocks := []anthropic.ToolResultBlockParamContentUnion{
-								{
-									OfImage: anthropic.NewImageBlockBase64(content.MediaType, content.Data).OfImage,
-								},
-							}
-							if content.Text != "" {
-								contentBlocks = append(contentBlocks, anthropic.ToolResultBlockParamContentUnion{
-									OfText: &anthropic.TextBlockParam{
-										Text: content.Text,
-									},
-								})
+							contentBlocks, warning := toolResultMediaContent(content)
+							if warning != nil {
+								warnings = append(warnings, *warning)
 							}
 							toolResultBlock.Content = contentBlocks
 						case fantasy.ToolResultContentTypeError:
@@ -1442,6 +1416,80 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 		}
 	}
 	return systemBlocks, messages, warnings
+}
+
+// fileBlock converts a file to an Anthropic image or document block. It
+// returns a warning when Anthropic does not support the media type.
+func fileBlock(file fantasy.FilePart) (*anthropic.ImageBlockParam, *anthropic.DocumentBlockParam, *fantasy.CallWarning) {
+	switch {
+	case strings.HasPrefix(file.MediaType, "image/"):
+		return anthropic.NewImageBlockBase64(file.MediaType, base64.StdEncoding.EncodeToString(file.Data)).OfImage, nil, nil
+	case file.MediaType == "application/pdf":
+		document := anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
+			Data: base64.StdEncoding.EncodeToString(file.Data),
+		}).OfDocument
+		document.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
+		return nil, document, nil
+	case strings.HasPrefix(file.MediaType, "text/"):
+		document := anthropic.NewDocumentBlock(anthropic.PlainTextSourceParam{
+			Data: string(file.Data),
+		}).OfDocument
+		document.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
+		return nil, document, nil
+	default:
+		return nil, nil, &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("file part media type %s not supported", file.MediaType),
+		}
+	}
+}
+
+// toolResultMediaContent converts tool-result media with the same rules as
+// user files. When the media cannot be converted, a text block tells the
+// model about it. The blocks get no cache_control: the breakpoint stays on
+// the tool_result block because Anthropic allows only four breakpoints.
+func toolResultMediaContent(media fantasy.ToolResultOutputContentMedia) ([]anthropic.ToolResultBlockParamContentUnion, *fantasy.CallWarning) {
+	var blocks []anthropic.ToolResultBlockParamContentUnion
+	var warning *fantasy.CallWarning
+	file, err := media.FilePart()
+	if err != nil {
+		warning = &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("tool result media type %s has invalid data: %v", media.MediaType, err),
+		}
+	} else {
+		image, document, _ := fileBlock(file)
+		switch {
+		case image != nil:
+			blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfImage: image})
+		case document != nil:
+			blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfDocument: document})
+		default:
+			warning = &fantasy.CallWarning{
+				Type:    fantasy.CallWarningTypeOther,
+				Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", media.MediaType),
+			}
+		}
+	}
+	if warning != nil {
+		mediaType := media.MediaType
+		if mediaType == "" {
+			mediaType = "file"
+		}
+		blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{
+			OfText: &anthropic.TextBlockParam{
+				Text: fmt.Sprintf("The tool returned %s content, which cannot be displayed.", mediaType),
+			},
+		})
+	}
+	if media.Text != "" {
+		blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{
+			OfText: &anthropic.TextBlockParam{
+				Text: media.Text,
+			},
+		})
+	}
+	return blocks, warning
 }
 
 func hasVisibleUserContent(content []anthropic.ContentBlockParamUnion) bool {

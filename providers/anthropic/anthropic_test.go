@@ -545,6 +545,128 @@ func TestToPrompt_DropsEmptyMessages(t *testing.T) {
 	})
 }
 
+func TestToPrompt_ToolResultMedia(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		media       fantasy.ToolResultOutputContentMedia
+		wantContent string
+		wantWarning string
+	}{
+		{
+			name: "PDF becomes a document titled with the filename",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data:      "JVBERi0xLjQ=",
+				MediaType: "application/pdf",
+				Filename:  "quarterly_report.v1.pdf",
+				Text:      "Report attached.",
+			},
+			wantContent: `[
+				{"type": "document", "title": "quarterly report v1 pdf", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0xLjQ="}},
+				{"type": "text", "text": "Report attached."}
+			]`,
+		},
+		{
+			name: "plain text becomes a text document",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data:      "aGVsbG8=",
+				MediaType: "text/plain",
+				Filename:  "notes.txt",
+			},
+			wantContent: `[
+				{"type": "document", "title": "notes txt", "source": {"type": "text", "media_type": "text/plain", "data": "hello"}}
+			]`,
+		},
+		{
+			name: "image stays an image",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data:      "AQID",
+				MediaType: "image/png",
+			},
+			wantContent: `[
+				{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AQID"}}
+			]`,
+		},
+		{
+			name: "unsupported media type becomes text",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data:      "AQID",
+				MediaType: "application/zip",
+				Text:      "logs attached",
+			},
+			wantContent: `[
+				{"type": "text", "text": "The tool returned application/zip content, which cannot be displayed."},
+				{"type": "text", "text": "logs attached"}
+			]`,
+			wantWarning: "tool result media type application/zip not supported, sending text placeholder only",
+		},
+		{
+			name: "missing media type becomes text",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data: "AQID",
+			},
+			wantContent: `[
+				{"type": "text", "text": "The tool returned file content, which cannot be displayed."}
+			]`,
+			wantWarning: "not supported, sending text placeholder only",
+		},
+		{
+			name: "invalid base64 becomes text",
+			media: fantasy.ToolResultOutputContentMedia{
+				Data:      "not base64!",
+				MediaType: "application/pdf",
+			},
+			wantContent: `[
+				{"type": "text", "text": "The tool returned application/pdf content, which cannot be displayed."}
+			]`,
+			wantWarning: "tool result media type application/pdf has invalid data",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			prompt := fantasy.Prompt{
+				{
+					Role: fantasy.MessageRoleTool,
+					Content: []fantasy.MessagePart{
+						fantasy.ToolResultPart{
+							ToolCallID: "call_1",
+							Output:     tt.media,
+							ProviderOptions: fantasy.ProviderOptions{
+								Name: &ProviderCacheControlOptions{CacheControl: CacheControl{Type: "ephemeral"}},
+							},
+						},
+					},
+				},
+			}
+
+			_, messages, warnings := toPrompt(prompt, true)
+
+			require.Len(t, messages, 1)
+			require.Len(t, messages[0].Content, 1)
+			got, err := json.Marshal(messages[0].Content[0])
+			require.NoError(t, err)
+			// The only cache breakpoint is on the tool_result block itself.
+			require.JSONEq(t, `{
+				"type": "tool_result",
+				"tool_use_id": "call_1",
+				"cache_control": {"type": "ephemeral"},
+				"content": `+tt.wantContent+`
+			}`, string(got))
+			if tt.wantWarning == "" {
+				require.Empty(t, warnings)
+				return
+			}
+			require.Len(t, warnings, 1)
+			require.Equal(t, fantasy.CallWarningTypeOther, warnings[0].Type)
+			require.Contains(t, warnings[0].Message, tt.wantWarning)
+		})
+	}
+}
+
 func TestParseContextTooLargeError(t *testing.T) {
 	t.Parallel()
 
