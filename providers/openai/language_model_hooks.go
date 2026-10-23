@@ -412,90 +412,12 @@ func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletio
 						continue
 					}
 
-					switch {
-					case strings.HasPrefix(filePart.MediaType, "text/"):
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						documentBlock := openai.ChatCompletionContentPartFileFileParam{
-							FileData: param.NewOpt(base64Encoded),
-						}
-						content = append(content, openai.FileContentPart(documentBlock))
-
-					case strings.HasPrefix(filePart.MediaType, "image/"):
-						// Handle image files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						data := "data:" + filePart.MediaType + ";base64," + base64Encoded
-						imageURL := openai.ChatCompletionContentPartImageImageURLParam{URL: data}
-
-						// Check for provider-specific options like image detail
-						if providerOptions, ok := filePart.ProviderOptions[Name]; ok {
-							if detail, ok := providerOptions.(*ProviderFileOptions); ok {
-								imageURL.Detail = detail.ImageDetail
-							}
-						}
-
-						imageBlock := openai.ChatCompletionContentPartImageParam{ImageURL: imageURL}
-						content = append(content, openai.ChatCompletionContentPartUnionParam{OfImageURL: &imageBlock})
-
-					case filePart.MediaType == "audio/wav":
-						// Handle WAV audio files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						audioBlock := openai.ChatCompletionContentPartInputAudioParam{
-							InputAudio: openai.ChatCompletionContentPartInputAudioInputAudioParam{
-								Data:   base64Encoded,
-								Format: "wav",
-							},
-						}
-						content = append(content, openai.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock})
-
-					case filePart.MediaType == "audio/mpeg" || filePart.MediaType == "audio/mp3":
-						// Handle MP3 audio files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						audioBlock := openai.ChatCompletionContentPartInputAudioParam{
-							InputAudio: openai.ChatCompletionContentPartInputAudioInputAudioParam{
-								Data:   base64Encoded,
-								Format: "mp3",
-							},
-						}
-						content = append(content, openai.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock})
-
-					case filePart.MediaType == "application/pdf":
-						// Handle PDF files
-						dataStr := string(filePart.Data)
-
-						// Check if data looks like a file ID (starts with "file-")
-						if strings.HasPrefix(dataStr, "file-") {
-							fileBlock := openai.ChatCompletionContentPartFileParam{
-								File: openai.ChatCompletionContentPartFileFileParam{
-									FileID: param.NewOpt(dataStr),
-								},
-							}
-							content = append(content, openai.ChatCompletionContentPartUnionParam{OfFile: &fileBlock})
-						} else {
-							// Handle as base64 data
-							base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-							data := "data:application/pdf;base64," + base64Encoded
-
-							filename := filePart.Filename
-							if filename == "" {
-								// Generate default filename based on content index
-								filename = fmt.Sprintf("part-%d.pdf", len(content))
-							}
-
-							fileBlock := openai.ChatCompletionContentPartFileParam{
-								File: openai.ChatCompletionContentPartFileFileParam{
-									Filename: param.NewOpt(filename),
-									FileData: param.NewOpt(data),
-								},
-							}
-							content = append(content, openai.ChatCompletionContentPartUnionParam{OfFile: &fileBlock})
-						}
-
-					default:
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
-						})
+					part, warning := FilePartToChatContentPart(filePart, len(content))
+					if warning != nil {
+						warnings = append(warnings, *warning)
+						continue
 					}
+					content = append(content, part)
 				}
 			}
 			if !HasVisibleUserContent(content) {
@@ -577,6 +499,97 @@ func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletio
 		}
 	}
 	return media.Close(messages), warnings
+}
+
+// FilePartToChatContentPart converts a file part to a Chat Completions user
+// content part. A PDF without a filename is named after index, its position in
+// the message. Unsupported media types return a warning instead of a part.
+// OpenAI-compatible providers share this converter.
+func FilePartToChatContentPart(filePart fantasy.FilePart, index int) (openai.ChatCompletionContentPartUnionParam, *fantasy.CallWarning) {
+	switch {
+	case strings.HasPrefix(filePart.MediaType, "text/"):
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		documentBlock := openai.ChatCompletionContentPartFileFileParam{
+			FileData: param.NewOpt(base64Encoded),
+		}
+		return openai.FileContentPart(documentBlock), nil
+
+	case strings.HasPrefix(filePart.MediaType, "image/"):
+		// Handle image files
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		data := "data:" + filePart.MediaType + ";base64," + base64Encoded
+		imageURL := openai.ChatCompletionContentPartImageImageURLParam{URL: data}
+
+		// Check for provider-specific options like image detail
+		if providerOptions, ok := filePart.ProviderOptions[Name]; ok {
+			if detail, ok := providerOptions.(*ProviderFileOptions); ok {
+				imageURL.Detail = detail.ImageDetail
+			}
+		}
+
+		imageBlock := openai.ChatCompletionContentPartImageParam{ImageURL: imageURL}
+		return openai.ChatCompletionContentPartUnionParam{OfImageURL: &imageBlock}, nil
+
+	case filePart.MediaType == "audio/wav":
+		// Handle WAV audio files
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		audioBlock := openai.ChatCompletionContentPartInputAudioParam{
+			InputAudio: openai.ChatCompletionContentPartInputAudioInputAudioParam{
+				Data:   base64Encoded,
+				Format: "wav",
+			},
+		}
+		return openai.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock}, nil
+
+	case filePart.MediaType == "audio/mpeg" || filePart.MediaType == "audio/mp3":
+		// Handle MP3 audio files
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		audioBlock := openai.ChatCompletionContentPartInputAudioParam{
+			InputAudio: openai.ChatCompletionContentPartInputAudioInputAudioParam{
+				Data:   base64Encoded,
+				Format: "mp3",
+			},
+		}
+		return openai.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock}, nil
+
+	case filePart.MediaType == "application/pdf":
+		// Handle PDF files
+		dataStr := string(filePart.Data)
+
+		// Check if data looks like a file ID (starts with "file-")
+		if strings.HasPrefix(dataStr, "file-") {
+			fileBlock := openai.ChatCompletionContentPartFileParam{
+				File: openai.ChatCompletionContentPartFileFileParam{
+					FileID: param.NewOpt(dataStr),
+				},
+			}
+			return openai.ChatCompletionContentPartUnionParam{OfFile: &fileBlock}, nil
+		}
+
+		// Handle as base64 data
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		data := "data:application/pdf;base64," + base64Encoded
+
+		filename := filePart.Filename
+		if filename == "" {
+			// Generate default filename based on content index
+			filename = fmt.Sprintf("part-%d.pdf", index)
+		}
+
+		fileBlock := openai.ChatCompletionContentPartFileParam{
+			File: openai.ChatCompletionContentPartFileFileParam{
+				Filename: param.NewOpt(filename),
+				FileData: param.NewOpt(data),
+			},
+		}
+		return openai.ChatCompletionContentPartUnionParam{OfFile: &fileBlock}, nil
+
+	default:
+		return openai.ChatCompletionContentPartUnionParam{}, &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
+		}
+	}
 }
 
 // HasVisibleUserContent reports whether a user message carries anything the
