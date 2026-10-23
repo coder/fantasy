@@ -326,6 +326,25 @@ func Cases() []Case {
 			},
 		},
 		{
+			// Text media is the exception to the user file rules, which would
+			// send it as a bare base64 file part that providers can reject.
+			// It gets the unsupported placeholder and warning instead.
+			Name:  "tool_result_media_text",
+			Model: "gpt-4o",
+			Prompt: fantasy.Prompt{
+				{Role: fantasy.MessageRoleAssistant, Content: []fantasy.MessagePart{
+					fantasy.ToolCallPart{ToolCallID: "c1", ToolName: "read", Input: "{}"},
+				}},
+				{Role: fantasy.MessageRoleTool, Content: []fantasy.MessagePart{
+					fantasy.ToolResultPart{ToolCallID: "c1", Output: fantasy.ToolResultOutputContentMedia{
+						Data:      b64([]byte("hello")),
+						MediaType: "text/plain",
+						Filename:  "notes.txt",
+					}},
+				}},
+			},
+		},
+		{
 			// An unsupported media type still has to answer the tool_call, so
 			// the text message goes out alone with a warning naming the type.
 			Name:  "tool_result_media_unsupported",
