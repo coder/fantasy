@@ -566,35 +566,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 
-					if strings.HasPrefix(filePart.MediaType, "image/") {
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						imageURL := fmt.Sprintf("data:%s;base64,%s", filePart.MediaType, base64Encoded)
-						contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
-							OfInputImage: &responses.ResponseInputImageParam{
-								Type:     "input_image",
-								ImageURL: param.NewOpt(imageURL),
-							},
-						})
-					} else if filePart.MediaType == "application/pdf" {
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						fileData := fmt.Sprintf("data:application/pdf;base64,%s", base64Encoded)
-						filename := filePart.Filename
-						if filename == "" {
-							filename = fmt.Sprintf("part-%d.pdf", i)
-						}
-						contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
-							OfInputFile: &responses.ResponseInputFileParam{
-								Type:     "input_file",
-								Filename: param.NewOpt(filename),
-								FileData: param.NewOpt(fileData),
-							},
-						})
-					} else {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
-						})
+					part, warning := filePartToResponsesContent(filePart, i)
+					if warning != nil {
+						warnings = append(warnings, *warning)
+						continue
 					}
+					contentParts = append(contentParts, part)
 				}
 			}
 
@@ -780,7 +757,6 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				}
 
 				var outputStr string
-				var followupParts responses.ResponseInputMessageContentListParam
 				switch toolResultPart.Output.GetType() {
 				case fantasy.ToolResultContentTypeText:
 					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](toolResultPart.Output)
@@ -811,29 +787,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						})
 						continue
 					}
-					// The Responses API function_call_output only accepts a
-					// string. Emit a text placeholder (preserving any
-					// accompanying text) so the tool_call/tool_result pairing
-					// stays valid, then attach the media as a synthetic user
-					// input_image so vision-capable models still receive it.
-					outputStr = output.Text
-					if outputStr == "" {
-						outputStr = fmt.Sprintf("The tool returned %s content; see the following user message.", output.MediaType)
+					mediaOutput, warning := responsesToolResultMediaOutput(output, toolResultPart.ToolCallID)
+					if warning != nil {
+						warnings = append(warnings, *warning)
 					}
-					if strings.HasPrefix(output.MediaType, "image/") {
-						imageURL := fmt.Sprintf("data:%s;base64,%s", output.MediaType, output.Data)
-						followupParts = append(followupParts, responses.ResponseInputContentUnionParam{
-							OfInputImage: &responses.ResponseInputImageParam{
-								Type:     "input_image",
-								ImageURL: param.NewOpt(imageURL),
-							},
-						})
-					} else {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", output.MediaType),
-						})
-					}
+					input = append(input, mediaOutput)
+					continue
 				default:
 					warnings = append(warnings, fantasy.CallWarning{
 						Type:    fantasy.CallWarningTypeOther,
@@ -843,9 +802,6 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				}
 
 				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(toolResultPart.ToolCallID, outputStr))
-				if len(followupParts) > 0 {
-					input = append(input, responses.ResponseInputItemParamOfMessage(followupParts, responses.EasyInputMessageRoleUser))
-				}
 			}
 		}
 	}
@@ -855,6 +811,114 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	}
 
 	return input, warnings, nil
+}
+
+// filePartToResponsesContent converts a file part to a Responses input content
+// part. A PDF without a filename is named after index, its position in the
+// message. Unsupported media types return a warning instead of a part.
+func filePartToResponsesContent(filePart fantasy.FilePart, index int) (responses.ResponseInputContentUnionParam, *fantasy.CallWarning) {
+	switch {
+	case strings.HasPrefix(filePart.MediaType, "image/"):
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		imageURL := fmt.Sprintf("data:%s;base64,%s", filePart.MediaType, base64Encoded)
+		return responses.ResponseInputContentUnionParam{
+			OfInputImage: &responses.ResponseInputImageParam{
+				Type:     "input_image",
+				ImageURL: param.NewOpt(imageURL),
+			},
+		}, nil
+	case filePart.MediaType == "application/pdf":
+		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
+		fileData := fmt.Sprintf("data:application/pdf;base64,%s", base64Encoded)
+		filename := filePart.Filename
+		if filename == "" {
+			filename = fmt.Sprintf("part-%d.pdf", index)
+		}
+		return responses.ResponseInputContentUnionParam{
+			OfInputFile: &responses.ResponseInputFileParam{
+				Type:     "input_file",
+				Filename: param.NewOpt(filename),
+				FileData: param.NewOpt(fileData),
+			},
+		}, nil
+	default:
+		return responses.ResponseInputContentUnionParam{}, &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
+		}
+	}
+}
+
+// toFunctionCallOutputItem copies an input_image or input_file content part
+// into the function_call_output item type, which has the same fields under
+// different type names.
+func toFunctionCallOutputItem(part responses.ResponseInputContentUnionParam) responses.ResponseFunctionCallOutputItemUnionParam {
+	switch {
+	case part.OfInputImage != nil:
+		return responses.ResponseFunctionCallOutputItemUnionParam{
+			OfInputImage: &responses.ResponseInputImageContentParam{
+				FileID:   part.OfInputImage.FileID,
+				ImageURL: part.OfInputImage.ImageURL,
+				Detail:   responses.ResponseInputImageContentDetail(part.OfInputImage.Detail),
+			},
+		}
+	case part.OfInputFile != nil:
+		return responses.ResponseFunctionCallOutputItemUnionParam{
+			OfInputFile: &responses.ResponseInputFileContentParam{
+				FileData: part.OfInputFile.FileData,
+				FileID:   part.OfInputFile.FileID,
+				FileURL:  part.OfInputFile.FileURL,
+				Filename: part.OfInputFile.Filename,
+				Detail:   responses.ResponseInputFileContentDetail(part.OfInputFile.Detail),
+			},
+		}
+	default:
+		return responses.ResponseFunctionCallOutputItemUnionParam{}
+	}
+}
+
+// responsesToolResultMediaOutput builds the function_call_output for a media
+// tool result. The output holds the accompanying text, if any, and the media
+// converted with the same rules as a user file. Media that cannot be converted
+// becomes a text output that says so, plus a warning.
+func responsesToolResultMediaOutput(output fantasy.ToolResultOutputContentMedia, callID string) (responses.ResponseInputItemUnionParam, *fantasy.CallWarning) {
+	filePart, err := output.FilePart()
+	if err != nil {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("%v, sending text placeholder only", err),
+		}
+	}
+
+	var items responses.ResponseFunctionCallOutputItemListParam
+	if output.Text != "" {
+		items = append(items, responses.ResponseFunctionCallOutputItemUnionParam{
+			OfInputText: &responses.ResponseInputTextContentParam{Text: output.Text},
+		})
+	}
+	part, warning := filePartToResponsesContent(filePart, len(items))
+	if warning != nil {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), unsupportedToolMediaWarning(output)
+	}
+	items = append(items, toFunctionCallOutputItem(part))
+	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, items), nil
+}
+
+// undisplayableToolMediaText is the tool output text for media that is not
+// sent to the model.
+func undisplayableToolMediaText(output fantasy.ToolResultOutputContentMedia) string {
+	notice := fmt.Sprintf("The tool returned %s content, which cannot be displayed.", output.MediaType)
+	if output.Text == "" {
+		return notice
+	}
+	return output.Text + "\n\n" + notice
+}
+
+func unsupportedToolMediaWarning(output fantasy.ToolResultOutputContentMedia) *fantasy.CallWarning {
+	return &fantasy.CallWarning{
+		Type:    fantasy.CallWarningTypeOther,
+		Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", output.MediaType),
+	}
 }
 
 func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.ResponseInputItemUnionParam, bool) {
