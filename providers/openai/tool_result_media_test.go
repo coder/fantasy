@@ -384,8 +384,8 @@ func TestToResponsesPrompt_MediaToolResult_PDFInParallelBatch(t *testing.T) {
 		"type": "function_call_output",
 		"call_id": "pdf-resp-1",
 		"output": [
-			{"type": "input_text", "text": "Quarterly report."},
-			{"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,`+pdfData+`"}
+			{"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,`+pdfData+`"},
+			{"type": "input_text", "text": "Quarterly report."}
 		]
 	}`, input[2])
 	requireJSONEq(t, `{"type": "function_call_output", "call_id": "txt-resp-1", "output": "ok"}`, input[3])

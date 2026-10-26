@@ -878,8 +878,9 @@ func toFunctionCallOutputItem(part responses.ResponseInputContentUnionParam) res
 }
 
 // responsesToolResultMediaOutput builds the function_call_output for a media
-// tool result. The output holds the accompanying text, if any, and the media
-// converted with the same rules as a user file. Media that cannot be converted
+// tool result. The output holds the media, converted with the same rules as a
+// user file, then the accompanying text, if any, in the same order as the
+// Anthropic tool_result content. Media that cannot be converted
 // becomes a text output that says so, plus a warning.
 func responsesToolResultMediaOutput(output fantasy.ToolResultOutputContentMedia, callID string) (responses.ResponseInputItemUnionParam, *fantasy.CallWarning) {
 	filePart, err := output.FilePart()
@@ -890,17 +891,16 @@ func responsesToolResultMediaOutput(output fantasy.ToolResultOutputContentMedia,
 		}
 	}
 
-	var items responses.ResponseFunctionCallOutputItemListParam
+	part, warning := filePartToResponsesContent(filePart, 0)
+	if warning != nil {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), unsupportedToolMediaWarning(output)
+	}
+	items := responses.ResponseFunctionCallOutputItemListParam{toFunctionCallOutputItem(part)}
 	if output.Text != "" {
 		items = append(items, responses.ResponseFunctionCallOutputItemUnionParam{
 			OfInputText: &responses.ResponseInputTextContentParam{Text: output.Text},
 		})
 	}
-	part, warning := filePartToResponsesContent(filePart, len(items))
-	if warning != nil {
-		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), unsupportedToolMediaWarning(output)
-	}
-	items = append(items, toFunctionCallOutputItem(part))
 	return responses.ResponseInputItemParamOfFunctionCallOutput(callID, items), nil
 }
 
