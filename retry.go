@@ -17,8 +17,8 @@ type RetryFunction[T any] func(ctx context.Context, fn RetryFn[T]) (T, error)
 
 // getRetryDelayInMs calculates the retry delay based on error headers and exponential backoff.
 func getRetryDelayInMs(err error, exponentialBackoffDelay time.Duration) time.Duration {
-	var providerErr *ProviderError
-	if !errors.As(err, &providerErr) || providerErr.ResponseHeaders == nil {
+	providerErr, ok := errors.AsType[*ProviderError](err)
+	if !ok || providerErr.ResponseHeaders == nil {
 		return exponentialBackoffDelay
 	}
 
@@ -28,14 +28,14 @@ func getRetryDelayInMs(err error, exponentialBackoffDelay time.Duration) time.Du
 	// retry-ms is more precise than retry-after and used by e.g. OpenAI
 	if retryAfterMs, exists := headers["retry-after-ms"]; exists {
 		if timeoutMs, err := strconv.ParseFloat(retryAfterMs, 64); err == nil {
-			ms = time.Duration(timeoutMs) * time.Millisecond
+			ms = time.Duration(timeoutMs * float64(time.Millisecond))
 		}
 	}
 
 	// About the Retry-After header: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
 	if retryAfter, exists := headers["retry-after"]; exists && ms == 0 {
 		if timeoutSeconds, err := strconv.ParseFloat(retryAfter, 64); err == nil {
-			ms = time.Duration(timeoutSeconds) * time.Second
+			ms = time.Duration(timeoutSeconds * float64(time.Second))
 		} else {
 			// Try parsing as HTTP date
 			if t, err := time.Parse(time.RFC1123, retryAfter); err == nil {
@@ -68,8 +68,8 @@ func RetryWithExponentialBackoffRespectingRetryHeaders[T any](options RetryOptio
 		if err == nil || options.OnAuthRefresh == nil {
 			return result, err
 		}
-		var authErr *ProviderError
-		if !errors.As(err, &authErr) || !isAuthError(authErr) {
+		authErr, ok := errors.AsType[*ProviderError](err)
+		if !ok || !isAuthError(authErr) {
 			return result, err
 		}
 		if refreshErr := options.OnAuthRefresh(ctx, authErr); refreshErr != nil {
@@ -145,7 +145,7 @@ func retryWithExponentialBackoff[T any](ctx context.Context, fn RetryFn[T], opti
 	if isRetryableError(err) && tryNumber <= options.MaxRetries {
 		delay := getRetryDelayInMs(err, options.InitialDelayIn)
 		if options.OnRetry != nil {
-			errors.As(err, &providerErr)
+			providerErr, _ = errors.AsType[*ProviderError](err)
 			options.OnRetry(providerErr, delay)
 		}
 
@@ -181,15 +181,13 @@ func isAuthError(err *ProviderError) bool {
 // level transport errors. The latter two categories may not be wrapped
 // in ProviderError when they occur outside the provider's error handler.
 func isRetryableError(err error) bool {
-	var providerErr *ProviderError
-	if errors.As(err, &providerErr) {
+	if providerErr, ok := errors.AsType[*ProviderError](err); ok {
 		return providerErr.IsRetryable()
 	}
 	if isAbortError(err) {
 		return false
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
 	return IsTransportError(err)
