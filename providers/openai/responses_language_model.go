@@ -2,7 +2,6 @@ package openai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
+	"charm.land/fantasy/providers/internal/filepart"
 	"charm.land/fantasy/schema"
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v3"
@@ -566,7 +566,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 
-					part, warning := filePartToResponsesContent(filePart, i)
+					part, warning := filePartToResponsesContent(filepart.FromFilePart(filePart), i)
 					if warning != nil {
 						warnings = append(warnings, *warning)
 						continue
@@ -813,24 +813,23 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	return input, warnings, nil
 }
 
-// filePartToResponsesContent converts a file part to a Responses input content
-// part. A PDF without a filename is named after index, its position in the
-// message. Unsupported media types return a warning instead of a part.
-func filePartToResponsesContent(filePart fantasy.FilePart, index int) (responses.ResponseInputContentUnionParam, *fantasy.CallWarning) {
+// filePartToResponsesContent converts a user file part or tool-result media to
+// a Responses input content part. A PDF without a filename is named after
+// index, its position in the message. Unsupported media types return a warning
+// instead of a part.
+func filePartToResponsesContent(file filepart.File, index int) (responses.ResponseInputContentUnionParam, *fantasy.CallWarning) {
 	switch {
-	case strings.HasPrefix(filePart.MediaType, "image/"):
-		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-		imageURL := fmt.Sprintf("data:%s;base64,%s", filePart.MediaType, base64Encoded)
+	case strings.HasPrefix(file.MediaType, "image/"):
+		imageURL := fmt.Sprintf("data:%s;base64,%s", file.MediaType, file.Base64())
 		return responses.ResponseInputContentUnionParam{
 			OfInputImage: &responses.ResponseInputImageParam{
 				Type:     "input_image",
 				ImageURL: param.NewOpt(imageURL),
 			},
 		}, nil
-	case filePart.MediaType == "application/pdf":
-		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-		fileData := fmt.Sprintf("data:application/pdf;base64,%s", base64Encoded)
-		filename := filePart.Filename
+	case file.MediaType == "application/pdf":
+		fileData := fmt.Sprintf("data:application/pdf;base64,%s", file.Base64())
+		filename := file.Filename
 		if filename == "" {
 			filename = fmt.Sprintf("part-%d.pdf", index)
 		}
@@ -844,7 +843,7 @@ func filePartToResponsesContent(filePart fantasy.FilePart, index int) (responses
 	default:
 		return responses.ResponseInputContentUnionParam{}, &fantasy.CallWarning{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
+			Message: fmt.Sprintf("file part media type %s not supported", file.MediaType),
 		}
 	}
 }
@@ -883,15 +882,7 @@ func toFunctionCallOutputItem(part responses.ResponseInputContentUnionParam) res
 // Anthropic tool_result content. Media that cannot be converted
 // becomes a text output that says so, plus a warning.
 func responsesToolResultMediaOutput(output fantasy.ToolResultOutputContentMedia, callID string) (responses.ResponseInputItemUnionParam, *fantasy.CallWarning) {
-	filePart, err := output.FilePart()
-	if err != nil {
-		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), &fantasy.CallWarning{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: fmt.Sprintf("%v, sending text placeholder only", err),
-		}
-	}
-
-	part, warning := filePartToResponsesContent(filePart, 0)
+	part, warning := filePartToResponsesContent(filepart.FromToolResult(output), 0)
 	if warning != nil {
 		return responses.ResponseInputItemParamOfFunctionCallOutput(callID, undisplayableToolMediaText(output)), unsupportedToolMediaWarning(output)
 	}

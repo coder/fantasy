@@ -6,6 +6,7 @@ import (
 	"github.com/openai/openai-go/v3"
 
 	"charm.land/fantasy"
+	"charm.land/fantasy/providers/internal/filepart"
 )
 
 // ToolCacheTypeFunc returns the prompt-cache hint to attach to the tool result
@@ -135,14 +136,7 @@ func ToolResultMediaMessages(output fantasy.ToolResultOutputContentMedia, toolCa
 // part with the same rules as a user file, reporting whether the caller should
 // emit it.
 func toolResultMediaUserPart(output fantasy.ToolResultOutputContentMedia) (openai.ChatCompletionContentPartUnionParam, *fantasy.CallWarning, bool) {
-	filePart, err := output.FilePart()
-	if err != nil {
-		return openai.ChatCompletionContentPartUnionParam{}, &fantasy.CallWarning{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: fmt.Sprintf("%v, sending text placeholder only", err),
-		}, false
-	}
-	part, warning := FilePartToChatContentPart(filePart, 0)
+	part, warning := chatFileContentPart(filepart.FromToolResult(output), 0)
 	if warning != nil {
 		return openai.ChatCompletionContentPartUnionParam{}, unsupportedToolMediaWarning(output), false
 	}
