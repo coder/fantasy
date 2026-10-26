@@ -4,7 +4,6 @@ package anthropic
 import (
 	"cmp"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
+	"charm.land/fantasy/providers/internal/filepart"
 	"charm.land/fantasy/providers/internal/httpheaders"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/charmbracelet/anthropic-sdk-go"
@@ -1221,10 +1221,13 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 							if !ok {
 								continue
 							}
-							image, document, warning := fileBlock(file)
+							image, document, err := fileBlock(filepart.FromFilePart(file))
 							switch {
-							case warning != nil:
-								warnings = append(warnings, *warning)
+							case err != nil:
+								warnings = append(warnings, fantasy.CallWarning{
+									Type:    fantasy.CallWarningTypeOther,
+									Message: fmt.Sprintf("file part media type %s has invalid data: %v", file.MediaType, err),
+								})
 							case image != nil:
 								if cacheControl != nil {
 									image.CacheControl = anthropic.NewCacheControlEphemeralParam()
@@ -1235,6 +1238,11 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 									document.CacheControl = anthropic.NewCacheControlEphemeralParam()
 								}
 								anthropicContent = append(anthropicContent, anthropic.ContentBlockParamUnion{OfDocument: document})
+							default:
+								warnings = append(warnings, fantasy.CallWarning{
+									Type:    fantasy.CallWarningTypeOther,
+									Message: fmt.Sprintf("file part media type %s not supported", file.MediaType),
+								})
 							}
 						}
 					}
@@ -1419,28 +1427,30 @@ func toPrompt(prompt fantasy.Prompt, sendReasoningData bool) ([]anthropic.TextBl
 }
 
 // fileBlock converts a file to an Anthropic image or document block. It
-// returns a warning when Anthropic does not support the media type.
-func fileBlock(file fantasy.FilePart) (*anthropic.ImageBlockParam, *anthropic.DocumentBlockParam, *fantasy.CallWarning) {
+// returns neither when Anthropic does not support the media type, and an error
+// when text content cannot be decoded.
+func fileBlock(file filepart.File) (*anthropic.ImageBlockParam, *anthropic.DocumentBlockParam, error) {
 	switch {
 	case strings.HasPrefix(file.MediaType, "image/"):
-		return anthropic.NewImageBlockBase64(file.MediaType, base64.StdEncoding.EncodeToString(file.Data)).OfImage, nil, nil
+		return anthropic.NewImageBlockBase64(file.MediaType, file.Base64()).OfImage, nil, nil
 	case file.MediaType == "application/pdf":
 		document := anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
-			Data: base64.StdEncoding.EncodeToString(file.Data),
+			Data: file.Base64(),
 		}).OfDocument
 		document.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
 		return nil, document, nil
 	case strings.HasPrefix(file.MediaType, "text/"):
+		text, err := file.Bytes()
+		if err != nil {
+			return nil, nil, err
+		}
 		document := anthropic.NewDocumentBlock(anthropic.PlainTextSourceParam{
-			Data: string(file.Data),
+			Data: string(text),
 		}).OfDocument
 		document.Title = anthropic.String(sanitizeAnthropicDocumentTitle(file.Filename))
 		return nil, document, nil
 	default:
-		return nil, nil, &fantasy.CallWarning{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: fmt.Sprintf("file part media type %s not supported", file.MediaType),
-		}
+		return nil, nil, nil
 	}
 }
 
@@ -1451,24 +1461,21 @@ func fileBlock(file fantasy.FilePart) (*anthropic.ImageBlockParam, *anthropic.Do
 func toolResultMediaContent(media fantasy.ToolResultOutputContentMedia) ([]anthropic.ToolResultBlockParamContentUnion, *fantasy.CallWarning) {
 	var blocks []anthropic.ToolResultBlockParamContentUnion
 	var warning *fantasy.CallWarning
-	file, err := media.FilePart()
-	if err != nil {
+	image, document, err := fileBlock(filepart.FromToolResult(media))
+	switch {
+	case err != nil:
 		warning = &fantasy.CallWarning{
 			Type:    fantasy.CallWarningTypeOther,
 			Message: fmt.Sprintf("tool result media type %s has invalid data: %v", media.MediaType, err),
 		}
-	} else {
-		image, document, _ := fileBlock(file)
-		switch {
-		case image != nil:
-			blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfImage: image})
-		case document != nil:
-			blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfDocument: document})
-		default:
-			warning = &fantasy.CallWarning{
-				Type:    fantasy.CallWarningTypeOther,
-				Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", media.MediaType),
-			}
+	case image != nil:
+		blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfImage: image})
+	case document != nil:
+		blocks = append(blocks, anthropic.ToolResultBlockParamContentUnion{OfDocument: document})
+	default:
+		warning = &fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", media.MediaType),
 		}
 	}
 	if warning != nil {

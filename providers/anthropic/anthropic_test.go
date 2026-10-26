@@ -612,15 +612,15 @@ func TestToPrompt_ToolResultMedia(t *testing.T) {
 			wantWarning: "not supported, sending text placeholder only",
 		},
 		{
-			name: "invalid base64 becomes text",
+			name: "invalid base64 text becomes a notice",
 			media: fantasy.ToolResultOutputContentMedia{
 				Data:      "not base64!",
-				MediaType: "application/pdf",
+				MediaType: "text/plain",
 			},
 			wantContent: `[
-				{"type": "text", "text": "The tool returned application/pdf content, which cannot be displayed."}
+				{"type": "text", "text": "The tool returned text/plain content, which cannot be displayed."}
 			]`,
-			wantWarning: "tool result media type application/pdf has invalid data",
+			wantWarning: "tool result media type text/plain has invalid data",
 		},
 	}
 
