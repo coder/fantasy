@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/openai-go"
+	"github.com/openai/openai-go/v3"
 
 	"charm.land/fantasy"
 )

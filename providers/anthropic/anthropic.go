@@ -18,12 +18,12 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
 	"charm.land/fantasy/providers/internal/httpheaders"
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/bedrock"
-	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/anthropics/anthropic-sdk-go/packages/param"
-	"github.com/anthropics/anthropic-sdk-go/vertex"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/charmbracelet/anthropic-sdk-go"
+	"github.com/charmbracelet/anthropic-sdk-go/bedrock"
+	"github.com/charmbracelet/anthropic-sdk-go/option"
+	"github.com/charmbracelet/anthropic-sdk-go/packages/param"
+	"github.com/charmbracelet/anthropic-sdk-go/vertex"
 	"golang.org/x/oauth2/google"
 )
 
@@ -579,7 +579,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 
 	params.System = systemBlocks
 	params.Messages = messages
-	params.Model = a.modelID
+	params.Model = anthropic.Model(a.modelID)
 	params.MaxTokens = 4096
 
 	if call.MaxOutputTokens != nil {
@@ -647,7 +647,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 			return nil, nil, nil, nil, &fantasy.Error{Title: "no budget", Message: "thinking requires budget"}
 		}
 		if requiresAdaptiveThinking(a.modelID) {
-			adaptive := anthropic.ThinkingConfigAdaptiveParam{}
+			adaptive := anthropic.NewThinkingConfigAdaptiveParam()
 			if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
 				setThinkingDisplay(&adaptive, display)
 			}
@@ -660,7 +660,7 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 		}
 		warnings = stripThinkingUnsupportedParams(params, call, warnings)
 	case defaultsToAdaptiveThinking(a.modelID):
-		adaptive := anthropic.ThinkingConfigAdaptiveParam{}
+		adaptive := anthropic.NewThinkingConfigAdaptiveParam()
 		if display, ok := thinkingDisplay(providerOptions, a.modelID); ok {
 			setThinkingDisplay(&adaptive, display)
 		}

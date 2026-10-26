@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/charmbracelet/anthropic-sdk-go"
 )
 
 func TestToProviderErr_WrapsUnexpectedEOF(t *testing.T) {
@@ -281,9 +281,8 @@ func TestAPIErrorTitle(t *testing.T) {
 	}
 }
 
-// apiErrorWithType builds an SDK error carrying errType. The field behind
-// Type() is unexported, so it has to arrive the way the SDK fills it: by
-// decoding an error envelope.
+// apiErrorWithType builds an SDK error carrying errType. It has to arrive the
+// way the SDK fills it: by decoding an error envelope.
 func apiErrorWithType(t *testing.T, status int, errType string) *anthropic.Error {
 	t.Helper()
 
@@ -293,8 +292,8 @@ func apiErrorWithType(t *testing.T, status int, errType string) *anthropic.Error
 		if err := apiErr.UnmarshalJSON([]byte(envelope)); err != nil {
 			t.Fatalf("UnmarshalJSON(%s): %v", envelope, err)
 		}
-		if got := string(apiErr.Type()); got != errType {
-			t.Fatalf("the SDK did not take the type: Type() = %q, want %q", got, errType)
+		if got := apiErrorType(apiErr); got != errType {
+			t.Fatalf("the SDK did not take the type: apiErrorType() = %q, want %q", got, errType)
 		}
 	}
 	apiErr.StatusCode = status

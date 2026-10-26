@@ -3,7 +3,7 @@ package openai
 import (
 	"testing"
 
-	"github.com/charmbracelet/openai-go"
+	"github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/require"
 
 	"charm.land/fantasy"

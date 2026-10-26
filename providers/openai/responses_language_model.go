@@ -16,11 +16,11 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
 	"charm.land/fantasy/schema"
-	"github.com/charmbracelet/openai-go"
-	"github.com/charmbracelet/openai-go/packages/param"
-	"github.com/charmbracelet/openai-go/responses"
-	"github.com/charmbracelet/openai-go/shared"
 	"github.com/google/uuid"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 const topLogprobsMax = 20
@@ -838,9 +838,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					continue
 				}
 
-				functionCallOutput := responses.ResponseInputItemParamOfFunctionCallOutput(outputStr)
-				functionCallOutput.OfFunctionCallOutput.CallID = param.NewOpt(toolResultPart.ToolCallID)
-				input = append(input, functionCallOutput)
+				input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput(toolResultPart.ToolCallID, outputStr))
 				if len(followupParts) > 0 {
 					input = append(input, responses.ResponseInputItemParamOfMessage(followupParts, responses.EasyInputMessageRoleUser))
 				}
@@ -1561,22 +1559,30 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 
 			case "response.output_text.annotation.added":
 				added := event.AsResponseOutputTextAnnotationAdded()
-				annotation := added.Annotation
-				switch annotation.Type {
+				// The Annotation field is typed as `any` in the SDK;
+				// it deserializes as map[string]any from JSON.
+				annotationMap, ok := added.Annotation.(map[string]any)
+				if !ok {
+					break
+				}
+				annotationType, _ := annotationMap["type"].(string)
+				switch annotationType {
 				case "url_citation":
+					url, _ := annotationMap["url"].(string)
+					title, _ := annotationMap["title"].(string)
 					if !yield(fantasy.StreamPart{
 						Type:       fantasy.StreamPartTypeSource,
 						ID:         uuid.NewString(),
 						SourceType: fantasy.SourceTypeURL,
-						URL:        annotation.URL,
-						Title:      annotation.Title,
+						URL:        url,
+						Title:      title,
 					}) {
 						return
 					}
 				case "file_citation":
 					title := "Document"
-					if annotation.Filename != "" {
-						title = annotation.Filename
+					if fn, ok := annotationMap["filename"].(string); ok && fn != "" {
+						title = fn
 					}
 					if !yield(fantasy.StreamPart{
 						Type:       fantasy.StreamPartTypeSource,

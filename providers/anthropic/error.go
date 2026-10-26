@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/charmbracelet/anthropic-sdk-go"
 )
 
 var anthropicContextPattern = regexp.MustCompile(`prompt is too long:\s*(\d+)\s*tokens?\s*>\s*(\d+)\s*maximum`)
@@ -32,8 +32,8 @@ func toProviderErr(err error) error {
 			RequestBody:     apiErr.DumpRequest(true),
 			ResponseHeaders: toHeaderMap(apiErr.Response.Header),
 			ResponseBody:    apiErr.DumpResponse(true),
-			ErrorType:       string(apiErr.Type()),
-			TransientError:  fantasy.TransientStreamErrorTypes[string(apiErr.Type())],
+			ErrorType:       apiErrorType(apiErr),
+			TransientError:  fantasy.TransientStreamErrorTypes[apiErrorType(apiErr)],
 		}
 
 		parseContextTooLargeError(apiErr.Error(), providerErr)
@@ -64,7 +64,7 @@ func toProviderErr(err error) error {
 // as a 2xx, so titling from that status puts "ok" above a failure, and only
 // the payload can name that one.
 func apiErrorTitle(apiErr *anthropic.Error) string {
-	errType := string(apiErr.Type())
+	errType := apiErrorType(apiErr)
 	if apiErr.StatusCode >= http.StatusOK && apiErr.StatusCode < http.StatusMultipleChoices {
 		return streamErrorTitle(errType)
 	}
@@ -91,6 +91,17 @@ type streamErrorEnvelope struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// apiErrorType reads the error type from an API error body. The coder
+// anthropic-sdk-go fork predates the SDK's Error.Type accessor, so this
+// decodes the same {"error":{"type":"..."}} envelope that accessor reads.
+func apiErrorType(apiErr *anthropic.Error) string {
+	var envelope streamErrorEnvelope
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &envelope) != nil || envelope.Error == nil {
+		return ""
+	}
+	return envelope.Error.Type
 }
 
 // wrapStreamError classifies a mid-stream SSE error event as a
