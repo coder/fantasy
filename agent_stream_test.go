@@ -3,10 +3,14 @@ package fantasy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -760,4 +764,428 @@ func TestStreamingAgent_StopTurn(t *testing.T) {
 	responseResults := result.Response.Content.ToolResults()
 	require.Len(t, responseResults, 1)
 	require.True(t, responseResults[0].StopTurn)
+}
+
+func TestStreamingAgent_SkipsToolDispatchWhenTruncated(t *testing.T) {
+	t.Parallel()
+
+	var toolExecuted bool
+	mockModel := &mockLanguageModel{
+		streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+			return func(yield func(StreamPart) bool) {
+				// Emit a tool call with truncated arguments
+				if !yield(StreamPart{Type: StreamPartTypeToolInputStart, ID: "call-trunc", ToolCallName: "echo"}) {
+					return
+				}
+				if !yield(StreamPart{Type: StreamPartTypeToolInputDelta, ID: "call-trunc", Delta: `{"message":"tr`}) {
+					return
+				}
+				if !yield(StreamPart{Type: StreamPartTypeToolInputEnd, ID: "call-trunc"}) {
+					return
+				}
+				if !yield(StreamPart{
+					Type:          StreamPartTypeToolCall,
+					ID:            "call-trunc",
+					ToolCallName:  "echo",
+					ToolCallInput: `{"message":"tr`,
+				}) {
+					return
+				}
+				// Finish with length instead of tool_calls
+				yield(StreamPart{
+					Type:         StreamPartTypeFinish,
+					Usage:        Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+					FinishReason: FinishReasonLength,
+				})
+			}, nil
+		},
+	}
+
+	echoTool := &trackingEchoTool{onExecute: func() { toolExecuted = true }}
+	agent := NewAgent(
+		mockModel,
+		WithTools(echoTool),
+	)
+
+	result, err := agent.Stream(context.Background(), AgentStreamCall{
+		Prompt: "test",
+	})
+	require.NoError(t, err)
+	require.Equal(t, FinishReasonLength, result.Response.FinishReason)
+	require.False(t, toolExecuted, "tool must not be dispatched when finish_reason is length")
+	require.Len(t, result.Steps, 1)
+}
+
+// trackingEchoTool wraps EchoTool to track whether Run was called.
+type trackingEchoTool struct {
+	onExecute       func()
+	providerOptions ProviderOptions
+}
+
+func (t *trackingEchoTool) Info() ToolInfo {
+	return (&EchoTool{}).Info()
+}
+
+func (t *trackingEchoTool) Run(ctx context.Context, params ToolCall) (ToolResponse, error) {
+	if t.onExecute != nil {
+		t.onExecute()
+	}
+	return (&EchoTool{}).Run(ctx, params)
+}
+
+func (t *trackingEchoTool) ProviderOptions() ProviderOptions {
+	return t.providerOptions
+}
+
+func (t *trackingEchoTool) SetProviderOptions(opts ProviderOptions) {
+	t.providerOptions = opts
+}
+
+// TestStreamingAgent_SkipsToolDispatchOnAbnormalFinish generalizes the
+// truncation guard: any finish reason that is not an explicit tool-calls
+// turn must not dispatch, even if ToolCall parts were emitted (a buggy or
+// unusual provider path, or a finish reason the provider layer maps from
+// an upstream failure such as content_filter or
+// insufficient_system_resource). See CHARM-2020.
+func TestStreamingAgent_SkipsToolDispatchOnAbnormalFinish(t *testing.T) {
+	t.Parallel()
+
+	for _, reason := range []FinishReason{FinishReasonError, FinishReasonContentFilter, FinishReasonUnknown} {
+		t.Run(string(reason), func(t *testing.T) {
+			t.Parallel()
+
+			var toolExecuted bool
+			mockModel := &mockLanguageModel{
+				streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+					return func(yield func(StreamPart) bool) {
+						if !yield(StreamPart{Type: StreamPartTypeToolInputStart, ID: "call-x", ToolCallName: "echo"}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeToolInputDelta, ID: "call-x", Delta: `{"message":"hi"}`}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeToolInputEnd, ID: "call-x"}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-x", ToolCallName: "echo", ToolCallInput: `{"message":"hi"}`}) {
+							return
+						}
+						yield(StreamPart{
+							Type:         StreamPartTypeFinish,
+							Usage:        Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+							FinishReason: reason,
+						})
+					}, nil
+				},
+			}
+
+			echoTool := &trackingEchoTool{onExecute: func() { toolExecuted = true }}
+			agent := NewAgent(mockModel, WithTools(echoTool))
+
+			result, err := agent.Stream(context.Background(), AgentStreamCall{Prompt: "test"})
+			require.NoError(t, err)
+			require.False(t, toolExecuted, "tool must not be dispatched when finish_reason is %s", reason)
+			require.Equal(t, reason, result.Response.FinishReason)
+			require.Len(t, result.Steps, 1)
+		})
+	}
+}
+
+// TestStreamingAgent_ParallelToolResultsInCallOrder guards CHARM-2020 F6:
+// two parallel tools where the second finishes first must still append
+// results in the order the model called them. Providers that pair results
+// with calls positionally (and any diff of step content) depend on it.
+func TestStreamingAgent_ParallelToolResultsInCallOrder(t *testing.T) {
+	t.Parallel()
+
+	type input struct {
+		N int `json:"n"`
+	}
+	slow := NewParallelAgentTool("slow", "finishes last",
+		func(ctx context.Context, in input, call ToolCall) (ToolResponse, error) {
+			time.Sleep(50 * time.Millisecond)
+			return NewTextResponse("slow-result"), nil
+		})
+	fast := NewParallelAgentTool("fast", "finishes first",
+		func(ctx context.Context, in input, call ToolCall) (ToolResponse, error) {
+			return NewTextResponse("fast-result"), nil
+		})
+
+	mockModel := &mockLanguageModel{
+		streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+			for _, msg := range call.Prompt {
+				if msg.Role == MessageRoleTool {
+					return func(yield func(StreamPart) bool) {
+						yield(StreamPart{Type: StreamPartTypeTextStart, ID: "t"})
+						yield(StreamPart{Type: StreamPartTypeTextDelta, ID: "t", Delta: "done"})
+						yield(StreamPart{Type: StreamPartTypeTextEnd, ID: "t"})
+						yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: FinishReasonStop, Usage: Usage{TotalTokens: 5}})
+					}, nil
+				}
+			}
+			return func(yield func(StreamPart) bool) {
+				if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-slow", ToolCallName: "slow", ToolCallInput: `{"n":1}`}) {
+					return
+				}
+				if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-fast", ToolCallName: "fast", ToolCallInput: `{"n":2}`}) {
+					return
+				}
+				yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: FinishReasonToolCalls, Usage: Usage{TotalTokens: 10}})
+			}, nil
+		},
+	}
+
+	agent := NewAgent(mockModel, WithTools(slow, fast))
+	result, err := agent.Stream(context.Background(), AgentStreamCall{Prompt: "run both"})
+	require.NoError(t, err)
+	require.Len(t, result.Steps, 2)
+
+	var order []string
+	for _, c := range result.Steps[0].Content {
+		if tr, ok := AsContentType[ToolResultContent](c); ok {
+			order = append(order, tr.ToolCallID)
+		}
+	}
+	require.Equal(t, []string{"call-slow", "call-fast"}, order,
+		"results must follow call order, not completion order")
+}
+
+// TestStreamingAgent_NoRepairOrOnToolCallBeforeAbnormalFinish pins the
+// CHARM-2020 "never repair" requirement for the stream path: a provider
+// that emits a ToolCall part and only then finishes with length/error must
+// not have the call repaired (an extra model call) or exposed to
+// OnToolCall consumers.
+func TestStreamingAgent_NoRepairOrOnToolCallBeforeAbnormalFinish(t *testing.T) {
+	t.Parallel()
+
+	for _, reason := range []FinishReason{FinishReasonLength, FinishReasonError, FinishReasonContentFilter, FinishReasonUnknown} {
+		t.Run(string(reason), func(t *testing.T) {
+			t.Parallel()
+
+			var repaired, onToolCallFired, executed bool
+			model := &mockLanguageModel{
+				streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+					return func(yield func(StreamPart) bool) {
+						// ToolCall emitted BEFORE the finish part.
+						if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-x", ToolCallName: "echo", ToolCallInput: `{"message":"tr`}) {
+							return
+						}
+						yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: reason, Usage: Usage{TotalTokens: 10}})
+					}, nil
+				},
+			}
+
+			agent := NewAgent(
+				model,
+				WithTools(&trackingEchoTool{onExecute: func() { executed = true }}),
+				WithRepairToolCall(func(ctx context.Context, options ToolCallRepairOptions) (*ToolCallContent, error) {
+					repaired = true
+					c := options.OriginalToolCall
+					c.Input = `{"message":"fixed"}`
+					return &c, nil
+				}),
+			)
+
+			result, err := agent.Stream(context.Background(), AgentStreamCall{
+				Prompt: "test",
+				OnToolCall: func(ToolCallContent) error {
+					onToolCallFired = true
+					return nil
+				},
+			})
+			require.NoError(t, err)
+			require.False(t, repaired, "repair must not run when finish is %s", reason)
+			require.False(t, onToolCallFired, "OnToolCall must not fire when finish is %s", reason)
+			require.False(t, executed, "tool must not execute when finish is %s", reason)
+			require.Len(t, result.Steps, 1)
+			// The raw call is still recorded for the step.
+			var calls []ToolCallContent
+			for _, c := range result.Steps[0].Content {
+				if tc, ok := AsContentType[ToolCallContent](c); ok {
+					calls = append(calls, tc)
+				}
+			}
+			require.Len(t, calls, 1)
+			require.Equal(t, `{"message":"tr`, calls[0].Input, "raw (unrepaired) input must be recorded")
+		})
+	}
+}
+
+// TestStreamingAgent_ProviderExecutedToolCallGatedOnFinish extends the
+// late-binding guarantee to provider-executed calls: OnToolCall must not
+// fire for them before the finish reason is known either.
+func TestStreamingAgent_ProviderExecutedToolCallGatedOnFinish(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		reason       FinishReason
+		wantNotified bool
+	}{
+		{FinishReasonToolCalls, true},
+		{FinishReasonLength, false},
+		{FinishReasonError, false},
+	} {
+		t.Run(string(tc.reason), func(t *testing.T) {
+			t.Parallel()
+
+			var onToolCallFired bool
+			model := &mockLanguageModel{
+				streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+					return func(yield func(StreamPart) bool) {
+						// Provider-executed tool call (e.g. web search)
+						if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "ws-1", ToolCallName: "web_search", ToolCallInput: `{"q":"x"}`, ProviderExecuted: true}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeToolResult, ID: "ws-1", ToolCallName: "web_search", ProviderExecuted: true}) {
+							return
+						}
+						yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: tc.reason, Usage: Usage{TotalTokens: 10}})
+					}, nil
+				},
+			}
+
+			agent := NewAgent(model)
+			result, err := agent.Stream(context.Background(), AgentStreamCall{
+				Prompt: "test",
+				OnToolCall: func(ToolCallContent) error {
+					onToolCallFired = true
+					return nil
+				},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantNotified, onToolCallFired,
+				"OnToolCall fired=%v for provider-executed call with finish %s", onToolCallFired, tc.reason)
+			require.Len(t, result.Steps, 1)
+		})
+	}
+}
+
+// TestStreamingAgent_ToolErrorReachesTheModel pins that a Go error returned
+// from a tool's Run function becomes an error result the model can act on:
+// the run continues, the tool runs once, and OnRetry never fires. The tool
+// error here satisfies net.Error, which the retry loop treats as a transient
+// network failure when it comes from the provider request.
+func TestStreamingAgent_ToolErrorReachesTheModel(t *testing.T) {
+	t.Parallel()
+
+	type input struct{}
+	toolErr := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+
+	for _, tc := range []struct {
+		name string
+		tool func(runs *atomic.Int32) AgentTool
+	}{
+		{
+			name: "sequential tool",
+			tool: func(runs *atomic.Int32) AgentTool {
+				return NewAgentTool("boom", "always fails",
+					func(ctx context.Context, in input, call ToolCall) (ToolResponse, error) {
+						runs.Add(1)
+						return ToolResponse{}, toolErr
+					})
+			},
+		},
+		{
+			name: "parallel tool",
+			tool: func(runs *atomic.Int32) AgentTool {
+				return NewParallelAgentTool("boom", "always fails",
+					func(ctx context.Context, in input, call ToolCall) (ToolResponse, error) {
+						runs.Add(1)
+						return ToolResponse{}, toolErr
+					})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var toolRuns, streamCalls atomic.Int32
+			mockModel := &mockLanguageModel{
+				streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+					n := streamCalls.Add(1)
+					return func(yield func(StreamPart) bool) {
+						if n == 1 {
+							if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-1", ToolCallName: "boom", ToolCallInput: `{}`}) {
+								return
+							}
+							yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: FinishReasonToolCalls, Usage: Usage{TotalTokens: 10}})
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeTextStart, ID: "t1"}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeTextDelta, ID: "t1", Delta: "could not reach it"}) {
+							return
+						}
+						if !yield(StreamPart{Type: StreamPartTypeTextEnd, ID: "t1"}) {
+							return
+						}
+						yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: FinishReasonStop, Usage: Usage{TotalTokens: 10}})
+					}, nil
+				},
+			}
+
+			agent := NewAgent(mockModel, WithTools(tc.tool(&toolRuns)))
+			retries := 0
+			res, err := agent.Stream(context.Background(), AgentStreamCall{
+				Prompt: "run boom",
+				OnRetry: func(err *ProviderError, delay time.Duration) {
+					retries++
+				},
+			})
+			require.NoError(t, err, "a tool failure must not end the run")
+			require.Equal(t, FinishReasonStop, res.Response.FinishReason)
+
+			var results []ToolResultContent
+			for _, step := range res.Steps {
+				results = append(results, step.Content.ToolResults()...)
+			}
+			require.Len(t, results, 1)
+			errResult, ok := results[0].Result.(ToolResultOutputContentError)
+			require.True(t, ok, "the tool failure must be recorded as an error result")
+			require.ErrorIs(t, errResult.Error, toolErr, "the tool's own error must stay reachable")
+
+			require.Equal(t, int32(2), streamCalls.Load(), "the model must see the error and get to respond")
+			require.Equal(t, int32(1), toolRuns.Load(), "the tool must not be re-executed")
+			require.Equal(t, 0, retries, "OnRetry must not fire for a tool error")
+		})
+	}
+}
+
+// TestStreamingAgent_CancelDuringToolEndsRun pins that cancellation still
+// ends the run now that a tool's error no longer does. The tool reports a
+// plain failure rather than the context error, so the only thing that can
+// stop the loop is the loop's own view of the context.
+func TestStreamingAgent_CancelDuringToolEndsRun(t *testing.T) {
+	t.Parallel()
+
+	type input struct{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var toolRuns, streamCalls atomic.Int32
+	tool := NewAgentTool("boom", "cancels the run",
+		func(ctx context.Context, in input, call ToolCall) (ToolResponse, error) {
+			toolRuns.Add(1)
+			cancel()
+			return ToolResponse{}, errors.New("could not finish")
+		})
+
+	mockModel := &mockLanguageModel{
+		streamFunc: func(ctx context.Context, call Call) (StreamResponse, error) {
+			streamCalls.Add(1)
+			return func(yield func(StreamPart) bool) {
+				if !yield(StreamPart{Type: StreamPartTypeToolCall, ID: "call-1", ToolCallName: "boom", ToolCallInput: `{}`}) {
+					return
+				}
+				yield(StreamPart{Type: StreamPartTypeFinish, FinishReason: FinishReasonToolCalls, Usage: Usage{TotalTokens: 10}})
+			}, nil
+		},
+	}
+
+	agent := NewAgent(mockModel, WithTools(tool))
+	_, err := agent.Stream(ctx, AgentStreamCall{Prompt: "run boom"})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, int32(1), streamCalls.Load(), "the model must not be asked again after a cancel")
+	require.Equal(t, int32(1), toolRuns.Load())
 }

@@ -22,10 +22,9 @@ var anthropicContextPattern = regexp.MustCompile(`prompt is too long:\s*(\d+)\s*
 const awsCredentialErrorFragment = "failed to refresh cached credentials" //nolint:gosec // false positive: error message fragment, not a credential
 
 func toProviderErr(err error) error {
-	var apiErr *anthropic.Error
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok {
 		providerErr := &fantasy.ProviderError{
-			Title:           cmp.Or(fantasy.ErrorTitleForStatusCode(apiErr.StatusCode), "provider request failed"),
+			Title:           apiErrorTitle(apiErr),
 			Message:         apiErr.Error(),
 			Cause:           apiErr,
 			URL:             apiErr.Request.URL.String(),
@@ -33,6 +32,8 @@ func toProviderErr(err error) error {
 			RequestBody:     apiErr.DumpRequest(true),
 			ResponseHeaders: toHeaderMap(apiErr.Response.Header),
 			ResponseBody:    apiErr.DumpResponse(true),
+			ErrorType:       apiErrorType(apiErr),
+			TransientError:  fantasy.TransientStreamErrorTypes[apiErrorType(apiErr)],
 		}
 
 		parseContextTooLargeError(apiErr.Error(), providerErr)
@@ -57,6 +58,26 @@ func toProviderErr(err error) error {
 	return fantasy.WrapTransportError(err)
 }
 
+// apiErrorTitle names what the error describes rather than the exchange that
+// carried it, preferring the status, then the payload's type, then a generic
+// title. A mid-stream SSE event rides inside a response that already went out
+// as a 2xx, so titling from that status puts "ok" above a failure, and only
+// the payload can name that one.
+func apiErrorTitle(apiErr *anthropic.Error) string {
+	errType := apiErrorType(apiErr)
+	if apiErr.StatusCode >= http.StatusOK && apiErr.StatusCode < http.StatusMultipleChoices {
+		return streamErrorTitle(errType)
+	}
+	// Anthropic answers an overload with 529, which the HTTP registry does
+	// not name, so a status-derived title comes out empty and the payload's
+	// type is the only thing left that says what happened.
+	statusTitle := fantasy.ErrorTitleForStatusCode(apiErr.StatusCode)
+	if statusTitle == "" && errType != "" {
+		return streamErrorTitle(errType)
+	}
+	return cmp.Or(statusTitle, "provider request failed")
+}
+
 // streamErrorPrefix is the message prefix the Anthropic SDK uses for a
 // mid-stream `error` event. The SDK reports it via fmt.Errorf with no
 // exported type, so we match the prefix and parse the payload ourselves.
@@ -70,6 +91,17 @@ type streamErrorEnvelope struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// apiErrorType reads the error type from an API error body. The coder
+// anthropic-sdk-go fork predates the SDK's Error.Type accessor, so this
+// decodes the same {"error":{"type":"..."}} envelope that accessor reads.
+func apiErrorType(apiErr *anthropic.Error) string {
+	var envelope streamErrorEnvelope
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &envelope) != nil || envelope.Error == nil {
+		return ""
+	}
+	return envelope.Error.Type
 }
 
 // wrapStreamError classifies a mid-stream SSE error event as a
@@ -98,6 +130,7 @@ func wrapStreamError(err error) *fantasy.ProviderError {
 		Message:        cmp.Or(message, payload),
 		Cause:          err,
 		ResponseBody:   []byte(payload),
+		ErrorType:      errType,
 		TransientError: fantasy.TransientStreamErrorTypes[errType],
 	}
 }

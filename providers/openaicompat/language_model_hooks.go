@@ -13,7 +13,10 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-const reasoningStartedCtx = "reasoning_started"
+const (
+	reasoningStartedCtx = "reasoning_started"
+	reasoningEndedCtx   = "reasoning_ended"
+)
 
 // buildTextBlock creates a text content block, applying any provider-specific extra
 // fields (e.g. Qwen's cache_control) onto it. Part-level fields override message-level
@@ -80,20 +83,20 @@ func ExtraContentFunc(choice openaisdk.ChatCompletionChoice) []fantasy.Content {
 	if err != nil {
 		return content
 	}
-	if rc := reasoningData.GetReasoningContent(); rc != "" {
+	if hasReasoningField(choice.Message.RawJSON()) {
 		content = append(content, fantasy.ReasoningContent{
-			Text: rc,
+			Text: reasoningData.GetReasoningContent(),
 		})
 	}
 	return content
 }
 
-func extractReasoningContext(ctx map[string]any) bool {
-	reasoningStarted, ok := ctx[reasoningStartedCtx]
+func ctxBool(ctx map[string]any, key string) bool {
+	v, ok := ctx[key]
 	if !ok {
 		return false
 	}
-	b, ok := reasoningStarted.(bool)
+	b, ok := v.(bool)
 	if !ok {
 		return false
 	}
@@ -106,9 +109,17 @@ func StreamExtraFunc(chunk openaisdk.ChatCompletionChunk, yield func(fantasy.Str
 		return ctx, true
 	}
 
-	reasoningStarted := extractReasoningContext(ctx)
+	for _, choice := range chunk.Choices {
+		// Reasoning state is tracked per choice: the openai language model
+		// invokes this hook once per chunk, a chunk may carry several
+		// choices, and providers may emit them in any slice order — key on
+		// the choice's own Index, not its position in the chunk.
+		inx := choice.Index
+		startedKey := fmt.Sprintf("%s:%d", reasoningStartedCtx, inx)
+		endedKey := fmt.Sprintf("%s:%d", reasoningEndedCtx, inx)
+		reasoningStarted := ctxBool(ctx, startedKey)
+		reasoningEnded := ctxBool(ctx, endedKey)
 
-	for inx, choice := range chunk.Choices {
 		reasoningData := ReasoningData{}
 		err := json.Unmarshal([]byte(choice.Delta.RawJSON()), &reasoningData)
 		if err != nil {
@@ -119,35 +130,54 @@ func StreamExtraFunc(chunk openaisdk.ChatCompletionChunk, yield func(fantasy.Str
 			return ctx, false
 		}
 
-		emitEvent := func(reasoningContent string) bool {
+		rc := reasoningData.GetReasoningContent()
+		hasField := hasReasoningField(choice.Delta.RawJSON())
+		boundary := choice.Delta.Content != "" || len(choice.Delta.ToolCalls) > 0 || choice.FinishReason != ""
+
+		// A reasoning delta carries non-empty reasoning text, or a
+		// present-but-empty field on a chunk that carries nothing else before
+		// any block was closed (Kimi's "thinking on, nothing to think"
+		// shape). A boundary chunk whose reasoning field is empty/null is
+		// never reasoning.
+		if rc != "" || (hasField && !boundary && !reasoningEnded) {
 			if !reasoningStarted {
-				shouldContinue := yield(fantasy.StreamPart{
+				reasoningStarted = true
+				ctx[startedKey] = true
+				if !yield(fantasy.StreamPart{
 					Type: fantasy.StreamPartTypeReasoningStart,
 					ID:   fmt.Sprintf("%d", inx),
-				})
-				if !shouldContinue {
-					return false
+				}) {
+					return ctx, false
 				}
 			}
-
-			return yield(fantasy.StreamPart{
-				Type:  fantasy.StreamPartTypeReasoningDelta,
-				ID:    fmt.Sprintf("%d", inx),
-				Delta: reasoningContent,
-			})
-		}
-		if rc := reasoningData.GetReasoningContent(); rc != "" {
-			if !reasoningStarted {
-				ctx[reasoningStartedCtx] = true
+			// Skip empty deltas: a present-but-empty field opens the block so
+			// it replays as reasoning_content: "", but there is nothing to
+			// stream.
+			if rc != "" {
+				if !yield(fantasy.StreamPart{
+					Type:  fantasy.StreamPartTypeReasoningDelta,
+					ID:    fmt.Sprintf("%d", inx),
+					Delta: rc,
+				}) {
+					return ctx, false
+				}
 			}
-			return ctx, emitEvent(rc)
+			// Fall through: a batching host may put the reasoning tail and the
+			// first content/tool-call token in the same delta.
 		}
-		if reasoningStarted && (choice.Delta.Content != "" || len(choice.Delta.ToolCalls) > 0) {
-			ctx[reasoningStartedCtx] = false
-			return ctx, yield(fantasy.StreamPart{
+		if reasoningStarted && boundary {
+			ctx[startedKey] = false
+			ctx[endedKey] = true
+			// The openai main loop runs this hook before emitting a chunk's
+			// text/tool-call parts, so on a batched boundary chunk the part order
+			// is ReasoningDelta(tail), ReasoningEnd, then the content/tool parts:
+			// the reasoning in that delta semantically precedes the content.
+			if !yield(fantasy.StreamPart{
 				Type: fantasy.StreamPartTypeReasoningEnd,
 				ID:   fmt.Sprintf("%d", inx),
-			})
+			}) {
+				return ctx, false
+			}
 		}
 	}
 	return ctx, true
@@ -159,15 +189,10 @@ func StreamExtraFunc(chunk openaisdk.ChatCompletionChunk, yield func(fantasy.Str
 func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletionMessageParamUnion, []fantasy.CallWarning) {
 	var messages []openaisdk.ChatCompletionMessageParamUnion
 	var warnings []fantasy.CallWarning
-	hasReasoning := false
-	// All tool replies in a batch must precede synthetic user media.
-	var pendingToolMedia []openaisdk.ChatCompletionMessageParamUnion
+	var media openai.ToolRunBuffer
 
 	for _, msg := range prompt {
-		if msg.Role != fantasy.MessageRoleTool {
-			messages = append(messages, pendingToolMedia...)
-			pendingToolMedia = nil
-		}
+		messages = media.Role(msg.Role, messages)
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
 			var blocks []openaisdk.ChatCompletionContentPartTextParam
@@ -345,7 +370,7 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 					}
 				}
 			}
-			if !hasVisibleCompatUserContent(content) {
+			if !openai.HasVisibleUserContent(content) {
 				warnings = append(warnings, fantasy.CallWarning{
 					Type:    fantasy.CallWarningTypeOther,
 					Message: "dropping empty user message (contains neither user-facing content nor tool results)",
@@ -378,7 +403,16 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 			assistantMsg := openaisdk.ChatCompletionAssistantMessageParam{
 				Role: "assistant",
 			}
-			var reasoningText string
+			// A turn may carry several reasoning or text segments (a model that
+			// reasons, speaks, then reasons again). Concatenate in order rather
+			// than last-write-wins so no segment is silently dropped (F2,
+			// CHARM-2020). Text segments are collected as ordered blocks; the
+			// string form is used only for a single segment with no extra
+			// fields, so mixed plain/extra turns keep their original order.
+			var reasoningTexts []string
+			reasoningPresent := false
+			var textBlocks []openaisdk.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion
+			textHasExtra := false
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -391,17 +425,10 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 						continue
 					}
 					textBlock, hasExtra := buildTextBlock(textPart.Text, textPart.ProviderOptions, msg.ProviderOptions)
-					if hasExtra {
-						assistantMsg.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{
-							OfArrayOfContentParts: []openaisdk.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
-								{OfText: textBlock},
-							},
-						}
-					} else {
-						assistantMsg.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{
-							OfString: param.NewOpt(textPart.Text),
-						}
-					}
+					textHasExtra = textHasExtra || hasExtra
+					textBlocks = append(textBlocks, openaisdk.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
+						OfText: textBlock,
+					})
 				case fantasy.ContentTypeReasoning:
 					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
 					if !ok {
@@ -411,8 +438,8 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 						})
 						continue
 					}
-					reasoningText = reasoningPart.Text
-					hasReasoning = true
+					reasoningTexts = append(reasoningTexts, reasoningPart.Text)
+					reasoningPresent = true
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
 					if !ok {
@@ -435,15 +462,33 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 						})
 				}
 			}
-			// Add reasoning_content field if present, or if thinking is enabled
-			// and the message has tool calls (some providers like Kimi require
-			// reasoning_content on all assistant messages when thinking is enabled).
-			if reasoningText != "" || (hasReasoning && len(assistantMsg.ToolCalls) > 0) {
+			// Text: when no segment carries extra fields, join into the string
+			// form; otherwise emit the ordered blocks one per segment so mixed
+			// plain/extra turns keep their original order.
+			if len(textBlocks) > 0 && !textHasExtra {
+				texts := make([]string, len(textBlocks))
+				for i, b := range textBlocks {
+					texts[i] = b.OfText.Text
+				}
+				assistantMsg.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: param.NewOpt(strings.Join(texts, "\n")),
+				}
+			} else if len(textBlocks) > 0 {
+				assistantMsg.Content = openaisdk.ChatCompletionAssistantMessageParamContentUnion{
+					OfArrayOfContentParts: textBlocks,
+				}
+			}
+			// Add reasoning_content field if the message carries a reasoning
+			// part, even when its text is empty: presence must mirror what the
+			// model emitted so resubmitted history stays byte-stable for prefix
+			// caching. Providers like Kimi require the field on assistant
+			// tool-call messages when thinking is enabled.
+			if reasoningPresent {
 				assistantMsg.SetExtraFields(map[string]any{
-					"reasoning_content": reasoningText,
+					"reasoning_content": strings.Join(reasoningTexts, "\n"),
 				})
 			}
-			if !hasVisibleCompatAssistantContent(&assistantMsg) {
+			if !openai.HasVisibleAssistantContent(&assistantMsg) {
 				warnings = append(warnings, fantasy.CallWarning{
 					Type:    fantasy.CallWarningTypeOther,
 					Message: "dropping empty assistant message (contains neither user-facing content nor tool calls)",
@@ -454,96 +499,11 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 				OfAssistant: &assistantMsg,
 			})
 		case fantasy.MessageRoleTool:
-			for _, c := range msg.Content {
-				if c.GetType() != fantasy.ContentTypeToolResult {
-					warnings = append(warnings, fantasy.CallWarning{
-						Type:    fantasy.CallWarningTypeOther,
-						Message: "tool message can only have tool result content",
-					})
-					continue
-				}
-
-				toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
-				if !ok {
-					warnings = append(warnings, fantasy.CallWarning{
-						Type:    fantasy.CallWarningTypeOther,
-						Message: "tool message result part does not have the right type",
-					})
-					continue
-				}
-
-				switch toolResultPart.Output.GetType() {
-				case fantasy.ToolResultContentTypeText:
-					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](toolResultPart.Output)
-					if !ok {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: "tool result output does not have the right type",
-						})
-						continue
-					}
-					messages = append(messages, openaisdk.ToolMessage(output.Text, toolResultPart.ToolCallID))
-				case fantasy.ToolResultContentTypeError:
-					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](toolResultPart.Output)
-					if !ok {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: "tool result output does not have the right type",
-						})
-						continue
-					}
-					messages = append(messages, openaisdk.ToolMessage(output.Error.Error(), toolResultPart.ToolCallID))
-				case fantasy.ToolResultContentTypeMedia:
-					output, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](toolResultPart.Output)
-					if !ok {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: "tool result output does not have the right type",
-						})
-						continue
-					}
-					// OpenAI-compatible chat completions tool messages cannot
-					// carry image or audio content directly; the SDK's content
-					// union only accepts text. Reuse the openai provider's
-					// helper, which emits a text tool message plus a synthetic
-					// user message holding the media.
-					mediaMessages, mediaWarnings := openai.ToolResultMediaMessages(output, toolResultPart.ToolCallID)
-					messages = append(messages, mediaMessages[0])
-					pendingToolMedia = append(pendingToolMedia, mediaMessages[1:]...)
-					warnings = append(warnings, mediaWarnings...)
-				default:
-					warnings = append(warnings, fantasy.CallWarning{
-						Type:    fantasy.CallWarningTypeOther,
-						Message: fmt.Sprintf("tool result output type %q not supported", toolResultPart.Output.GetType()),
-					})
-				}
-			}
+			toolMessages, deferred, toolWarnings := openai.ToolMessages(msg, nil)
+			messages = append(messages, toolMessages...)
+			media.Defer(deferred...)
+			warnings = append(warnings, toolWarnings...)
 		}
 	}
-	return append(messages, pendingToolMedia...), warnings
-}
-
-// toolResultMediaUserPart maps a tool-result media output to an OpenAI chat
-// completions user content part. It returns the content part, an optional
-// warning, and whether the caller should emit the returned part.
-
-func hasVisibleCompatUserContent(content []openaisdk.ChatCompletionContentPartUnionParam) bool {
-	for _, part := range content {
-		if part.OfText != nil || part.OfImageURL != nil || part.OfInputAudio != nil || part.OfFile != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func hasVisibleCompatAssistantContent(msg *openaisdk.ChatCompletionAssistantMessageParam) bool {
-	// Check if there's text content
-	if !param.IsOmitted(msg.Content.OfString) || len(msg.Content.OfArrayOfContentParts) > 0 {
-		return true
-	}
-	// Check if there are tool calls
-	if len(msg.ToolCalls) > 0 {
-		return true
-	}
-	return false
+	return media.Close(messages), warnings
 }
