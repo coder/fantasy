@@ -15,7 +15,7 @@
         "role": "assistant"
       },
       {
-        "content": "Recording of the session.\n\nThe tool returned video/mp4 content, which cannot be displayed.",
+        "content": "The tool returned video/mp4 content, which cannot be displayed.\n\nRecording of the session.",
         "tool_call_id": "c1",
         "role": "tool"
       }

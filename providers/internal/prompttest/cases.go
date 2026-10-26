@@ -372,8 +372,9 @@ func Cases() []Case {
 			},
 		},
 		{
-			// Accompanying text is kept, and the notice follows it, so the
-			// model does not assume it saw the media the text describes.
+			// Accompanying text is kept after the notice, which takes the
+			// media's place, so the model does not assume it saw the media
+			// the text describes.
 			Name:  "tool_result_media_unsupported_with_text",
 			Model: "gpt-4o",
 			Prompt: fantasy.Prompt{

@@ -905,13 +905,18 @@ func responsesToolResultMediaOutput(output fantasy.ToolResultOutputContentMedia,
 }
 
 // undisplayableToolMediaText is the tool output text for media that is not
-// sent to the model.
+// sent to the model. The notice takes the place of the media, so it comes
+// before the accompanying text.
 func undisplayableToolMediaText(output fantasy.ToolResultOutputContentMedia) string {
-	notice := fmt.Sprintf("The tool returned %s content, which cannot be displayed.", output.MediaType)
+	mediaType := output.MediaType
+	if mediaType == "" {
+		mediaType = "file"
+	}
+	notice := fmt.Sprintf("The tool returned %s content, which cannot be displayed.", mediaType)
 	if output.Text == "" {
 		return notice
 	}
-	return output.Text + "\n\n" + notice
+	return notice + "\n\n" + output.Text
 }
 
 func unsupportedToolMediaWarning(output fantasy.ToolResultOutputContentMedia) *fantasy.CallWarning {
