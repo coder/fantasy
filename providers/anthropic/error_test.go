@@ -187,7 +187,9 @@ func TestToProviderErr_StreamErrorWrappedByOuterError(t *testing.T) {
 //
 // Driving a real stream rather than hand-building the SDK error is the point:
 // the status on a mid-stream event is the SDK's behaviour, not ours, and a
-// hand-built error would assume the very thing worth checking.
+// hand-built error would assume the very thing worth checking. The pinned
+// coder anthropic-sdk-go fork still reports the event as an untyped error, so
+// the title comes from wrapStreamError and no status is set.
 func TestToProviderErr_TitlesMidStreamOverloadFromThePayload(t *testing.T) {
 	t.Parallel()
 
@@ -225,11 +227,6 @@ func TestToProviderErr_TitlesMidStreamOverloadFromThePayload(t *testing.T) {
 		t.Fatalf("stream error is %T, want *fantasy.ProviderError", streamErr)
 	}
 
-	// The premise: the SDK really does carry the response's status here.
-	if providerErr.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want 200; a mid-stream event is meant to "+
-			"arrive inside a successful response", providerErr.StatusCode)
-	}
 	if providerErr.Title != "provider overloaded" {
 		t.Errorf("Title = %q, want %q", providerErr.Title, "provider overloaded")
 	}

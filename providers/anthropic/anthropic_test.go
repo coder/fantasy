@@ -1095,7 +1095,8 @@ func TestGenerate_SendsThinkingDisplay(t *testing.T) {
 			options: func() *ProviderOptions {
 				return &ProviderOptions{Thinking: &ThinkingProviderOption{BudgetTokens: 2048}}
 			},
-			wantType: "adaptive",
+			wantType:    "adaptive",
+			wantDisplay: "summarized",
 		},
 		{
 			name:  "older opus models keep provider default",
@@ -4105,11 +4106,14 @@ func TestThinkingDisplayRespectsCallerChoice(t *testing.T) {
 
 // Widening the display default must not change which models get adaptive
 // thinking: that rewrites the request shape, where a display only adds a field.
+// Claude 5+ still gets adaptive thinking here, from its version rule
+// (thinkingOnByDefault), not from the display default.
 func TestDisplayDefaultDoesNotChangeThinkingMode(t *testing.T) {
 	t.Parallel()
 
-	require.False(t, requiresAdaptiveThinking("claude-opus-5"))
-	require.False(t, requiresAdaptiveThinking("claude-sonnet-5"))
+	require.True(t, thinkingOnByDefault("claude-opus-5"))
+	require.True(t, requiresAdaptiveThinking("claude-opus-5"))
+	require.True(t, requiresAdaptiveThinking("claude-sonnet-5"))
 	require.True(t, requiresAdaptiveThinking("claude-opus-4-7"))
 	require.True(t, requiresAdaptiveThinking("claude-mythos-preview"))
 }

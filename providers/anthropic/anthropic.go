@@ -1780,6 +1780,9 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 			case "message_start":
 				usage := chunk.AsMessageStart().Message.Usage
 				messageStartUsage = &usage
+				if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeKeepalive}) {
+					return
+				}
 			case "content_block_start":
 				contentBlockType := chunk.ContentBlock.Type
 				if contentBlockType == "tool_use" || contentBlockType == "server_tool_use" {
@@ -1979,6 +1982,9 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				// parse it from the raw delta JSON.
 				if rm := parseAnthropicRefusal(chunk.AsMessageDelta().Delta.RawJSON()); rm != nil {
 					refusalMeta = rm
+				}
+				if !yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeKeepalive}) {
+					return
 				}
 			case "message_stop":
 				sawMessageStop = true
