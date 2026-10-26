@@ -97,6 +97,16 @@ func Cases() []Case {
 			},
 		},
 		{
+			Name:  "user_text_file",
+			Model: "gpt-4o",
+			Prompt: fantasy.Prompt{
+				{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "Summarize the notes."},
+					fantasy.FilePart{Filename: "notes.txt", MediaType: "text/plain", Data: []byte("hello")},
+				}},
+			},
+		},
+		{
 			Name:  "user_unsupported_media",
 			Model: "gpt-4o",
 			Prompt: fantasy.Prompt{

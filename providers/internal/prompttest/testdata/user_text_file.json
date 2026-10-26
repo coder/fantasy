@@ -1,0 +1,18 @@
+{
+  "openai,openaicompat,openrouter,vercel": {
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Summarize the notes.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "warnings": [
+      "other: file part media type text/plain not supported"
+    ]
+  }
+}

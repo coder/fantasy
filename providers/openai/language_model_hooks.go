@@ -504,16 +504,11 @@ func DefaultToPrompt(prompt fantasy.Prompt, _, _ string) ([]openai.ChatCompletio
 // FilePartToChatContentPart converts a file part to a Chat Completions user
 // content part. A PDF without a filename is named after index, its position in
 // the message. Unsupported media types return a warning instead of a part.
-// OpenAI-compatible providers share this converter.
+// Text files are unsupported, as in the Responses converter, so callers must
+// send their content as a text part. OpenAI-compatible providers share this
+// converter.
 func FilePartToChatContentPart(filePart fantasy.FilePart, index int) (openai.ChatCompletionContentPartUnionParam, *fantasy.CallWarning) {
 	switch {
-	case strings.HasPrefix(filePart.MediaType, "text/"):
-		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-		documentBlock := openai.ChatCompletionContentPartFileFileParam{
-			FileData: param.NewOpt(base64Encoded),
-		}
-		return openai.FileContentPart(documentBlock), nil
-
 	case strings.HasPrefix(filePart.MediaType, "image/"):
 		// Handle image files
 		base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)

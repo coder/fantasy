@@ -2,7 +2,6 @@ package openai
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/openai/openai-go/v3"
 
@@ -134,9 +133,7 @@ func ToolResultMediaMessages(output fantasy.ToolResultOutputContentMedia, toolCa
 
 // toolResultMediaUserPart maps a tool-result media output to a user content
 // part with the same rules as a user file, reporting whether the caller should
-// emit it. Text media is the exception: the user rule sends it as a bare base64
-// file part, which providers can reject, and the stored tool result would then
-// fail every later request.
+// emit it.
 func toolResultMediaUserPart(output fantasy.ToolResultOutputContentMedia) (openai.ChatCompletionContentPartUnionParam, *fantasy.CallWarning, bool) {
 	filePart, err := output.FilePart()
 	if err != nil {
@@ -146,7 +143,7 @@ func toolResultMediaUserPart(output fantasy.ToolResultOutputContentMedia) (opena
 		}, false
 	}
 	part, warning := FilePartToChatContentPart(filePart, 0)
-	if warning != nil || strings.HasPrefix(filePart.MediaType, "text/") {
+	if warning != nil {
 		return openai.ChatCompletionContentPartUnionParam{}, unsupportedToolMediaWarning(output), false
 	}
 	return part, nil, true
