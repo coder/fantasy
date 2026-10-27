@@ -928,11 +928,10 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 // metadata, which unlike the call input keeps the status and the
 // deprecated single query. The item has no id: history from a stored turn
 // or another credential carries real ids, and the API replaces the sent
-// action with the stored item of that id. Sources are left out because
-// the API ignores them on input.
+// action with the stored item of that id.
 func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {
-		return responses.ResponseInputItemUnionParam{}, errors.New("it has no action")
+		return responses.ResponseInputItemUnionParam{}, errors.New("metadata has no action")
 	}
 	// The API rejects the whole request for any other action type.
 	switch meta.Action.Type {
@@ -940,13 +939,30 @@ func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseI
 	default:
 		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("action type %q cannot be replayed", meta.Action.Type)
 	}
-	action := *meta.Action
-	action.Sources = nil
+	// Only fields the API takes are sent, so a field added to the stored
+	// metadata cannot break replay.
+	type action struct {
+		Type    string   `json:"type"`
+		Queries []string `json:"queries,omitempty"`
+		Query   string   `json:"query,omitempty"`
+		URL     string   `json:"url,omitempty"`
+		Pattern string   `json:"pattern,omitempty"`
+	}
 	item := param.Override[responses.ResponseFunctionWebSearchParam](struct {
-		Type   string           `json:"type"`
-		Status string           `json:"status,omitempty"`
-		Action *WebSearchAction `json:"action"`
-	}{Type: "web_search_call", Status: meta.Status, Action: &action})
+		Type   string `json:"type"`
+		Status string `json:"status,omitempty"`
+		Action action `json:"action"`
+	}{
+		Type:   "web_search_call",
+		Status: meta.Status,
+		Action: action{
+			Type:    meta.Action.Type,
+			Queries: meta.Action.Queries,
+			Query:   meta.Action.Query,
+			URL:     meta.Action.URL,
+			Pattern: meta.Action.Pattern,
+		},
+	})
 	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, nil
 }
 

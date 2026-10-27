@@ -586,7 +586,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				answer,
 			),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
-			wantWarning: `dropping web search "ws_01": it has no action`,
+			wantWarning: `dropping web search "ws_01": metadata has no action`,
 		},
 		{
 			name:    "UnstoredWithoutMetadata",
