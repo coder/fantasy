@@ -693,6 +693,19 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					// Item-reference replay predates source storage metadata.
 					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
 					continue
+				case fantasy.ContentTypeToolResult:
+					// Stored searches replay as item references from the tool call.
+					if store {
+						continue
+					}
+					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
+					if !ok || !toolResultPart.ProviderExecuted {
+						continue
+					}
+					meta, _ := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
+					if item, ok := unstoredWebSearchCallItem(meta); ok {
+						input = append(input, item)
+					}
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
@@ -725,7 +738,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				}
 
 				// Provider-executed tool results (e.g. web search)
-				// are already round-tripped via the tool call; skip.
+				// are replayed from the assistant message; skip.
 				if toolResultPart.ProviderExecuted {
 					continue
 				}
@@ -902,6 +915,50 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 		toolCallPart.ToolName == "web_search_preview"
 }
 
+// unstoredWebSearchCallItem rebuilds a web search call from its result
+// metadata, which unlike the call input keeps the status and the
+// deprecated single query. The item has no id: with an id, a stored item
+// of that id replaces the sent action. Sources are left out because the
+// API ignores them on input.
+func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, bool) {
+	if meta == nil || meta.Action == nil {
+		return responses.ResponseInputItemUnionParam{}, false
+	}
+	// The API rejects the whole request for any other action type.
+	switch meta.Action.Type {
+	case "search", "open_page", "find_in_page":
+	default:
+		return responses.ResponseInputItemUnionParam{}, false
+	}
+	type action struct {
+		Type    string   `json:"type"`
+		Queries []string `json:"queries,omitempty"`
+		Query   string   `json:"query,omitempty"`
+		URL     string   `json:"url,omitempty"`
+		Pattern string   `json:"pattern,omitempty"`
+	}
+	encoded, err := json.Marshal(struct {
+		Type   string `json:"type"`
+		Status string `json:"status,omitempty"`
+		Action action `json:"action"`
+	}{
+		Type:   "web_search_call",
+		Status: meta.Status,
+		Action: action{
+			Type:    meta.Action.Type,
+			Queries: meta.Action.Queries,
+			Query:   meta.Action.Query,
+			URL:     meta.Action.URL,
+			Pattern: meta.Action.Pattern,
+		},
+	})
+	if err != nil {
+		return responses.ResponseInputItemUnionParam{}, false
+	}
+	item := param.Override[responses.ResponseFunctionWebSearchParam](json.RawMessage(encoded))
+	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, true
+}
+
 func validateResponsesInput(input responses.ResponseInputParam) error {
 	if err := validateResponsesFunctionCallOutputs(input); err != nil {
 		return err
@@ -1018,7 +1075,7 @@ func hasVisibleResponsesUserContent(content responses.ResponseInputMessageConten
 func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnionParam, startIdx int) bool {
 	// Check if we added any assistant content parts from this message
 	for i := startIdx; i < len(items); i++ {
-		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil {
+		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil || items[i].OfWebSearchCall != nil {
 			return true
 		}
 	}

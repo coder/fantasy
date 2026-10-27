@@ -19,6 +19,9 @@ type webSearchCallActionCase struct {
 	want      *WebSearchAction
 	wantInput string
 	wantFound []string
+	// wantReplay is the input item sent for the search when store is
+	// false.
+	wantReplay string
 }
 
 var webSearchCallActionCases = []webSearchCallActionCase{
@@ -40,8 +43,9 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 				{Type: "url", URL: "https://developers.openai.com/api/docs/guides/tools-web-search"},
 			},
 		},
-		wantInput: `{"type":"search","queries":["coder agents web search","openai responses sources"]}`,
-		wantFound: []string{"https://coder.com/docs/ai-coder", "https://developers.openai.com/api/docs/guides/tools-web-search"},
+		wantInput:  `{"type":"search","queries":["coder agents web search","openai responses sources"]}`,
+		wantFound:  []string{"https://coder.com/docs/ai-coder", "https://developers.openai.com/api/docs/guides/tools-web-search"},
+		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["coder agents web search","openai responses sources"]}}`,
 	},
 	{
 		name: "DeprecatedQuery",
@@ -53,7 +57,8 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Type:  "search",
 			Query: "latest AI news",
 		},
-		wantInput: `{"type":"search","queries":["latest AI news"]}`,
+		wantInput:  `{"type":"search","queries":["latest AI news"]}`,
+		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search","query":"latest AI news"}}`,
 	},
 	{
 		name: "NoQueries",
@@ -69,8 +74,9 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 				{Type: "url", URL: "https://example.com/weather"},
 			},
 		},
-		wantInput: `{"type":"search"}`,
-		wantFound: []string{"https://example.com/weather"},
+		wantInput:  `{"type":"search"}`,
+		wantFound:  []string{"https://example.com/weather"},
+		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search"}}`,
 	},
 	{
 		name: "OpenPage",
@@ -82,7 +88,8 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Type: "open_page",
 			URL:  "https://go.dev/dl/",
 		},
-		wantInput: `{"type":"open_page","url":"https://go.dev/dl/"}`,
+		wantInput:  `{"type":"open_page","url":"https://go.dev/dl/"}`,
+		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`,
 	},
 	{
 		name: "FindInPage",
@@ -96,7 +103,8 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			URL:     "https://go.dev/doc/devel/release",
 			Pattern: "go1.27",
 		},
-		wantInput: `{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}`,
+		wantInput:  `{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}`,
+		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}}`,
 	},
 	{
 		name:   "Failed",
@@ -109,7 +117,8 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Type:    "search",
 			Queries: []string{"tokyo population"},
 		},
-		wantInput: `{"type":"search","queries":["tokyo population"]}`,
+		wantInput:  `{"type":"search","queries":["tokyo population"]}`,
+		wantReplay: `{"type":"web_search_call","status":"failed","action":{"type":"search","queries":["tokyo population"]}}`,
 	},
 }
 
@@ -431,4 +440,164 @@ func TestResponsesWebSearchSourcesInclude(t *testing.T) {
 		requireWebSearchSourcesInclude(t, server.calls[0].body)
 		require.Contains(t, server.calls[0].body["include"], string(IncludeReasoningEncryptedContent))
 	})
+}
+
+func webSearchCallParts(id string, meta *WebSearchCallMetadata) []fantasy.MessagePart {
+	result := fantasy.ToolResultPart{ToolCallID: id, ProviderExecuted: true}
+	if meta != nil {
+		result.ProviderOptions = fantasy.ProviderOptions{Name: meta}
+	}
+	return []fantasy.MessagePart{
+		fantasy.ToolCallPart{ToolCallID: id, ToolName: "web_search", ProviderExecuted: true},
+		result,
+	}
+}
+
+func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, want string) {
+	t.Helper()
+
+	input, warnings, err := toResponsesPrompt(prompt, "system", store)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	encoded, err := json.Marshal(input)
+	require.NoError(t, err)
+	require.JSONEq(t, want, string(encoded))
+}
+
+func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range webSearchCallActionCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			prompt := fantasy.Prompt{
+				{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "Search."}}},
+				{Role: fantasy.MessageRoleAssistant, Content: append(
+					webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: tc.itemStatus(), Action: tc.want}),
+					fantasy.TextPart{Text: "Answer."},
+				)},
+			}
+			requireResponsesInputJSON(t, prompt, false, `[`+
+				`{"role":"user","content":[{"type":"input_text","text":"Search."}]},`+
+				tc.wantReplay+`,`+
+				`{"role":"assistant","content":"Answer."}]`)
+		})
+	}
+}
+
+func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
+	t.Parallel()
+
+	encrypted := "gAAAAABencrypted"
+	reasoning := fantasy.ReasoningPart{
+		Text: "Open the result.",
+		ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesReasoningMetadata{
+			ItemID:             "rs_01",
+			EncryptedContent:   &encrypted,
+			Summary:            []string{},
+			Finalized:          true,
+			SourceStoreEnabled: true,
+		}},
+	}
+	search := &WebSearchCallMetadata{
+		ItemID: "ws_01",
+		Status: "completed",
+		Action: &WebSearchAction{
+			Type:    "search",
+			Queries: []string{"go release"},
+			Sources: []WebSearchSource{{Type: "url", URL: "https://go.dev/dl/"}},
+		},
+	}
+	openPage := &WebSearchCallMetadata{
+		ItemID: "ws_02",
+		Status: "completed",
+		Action: &WebSearchAction{Type: "open_page", URL: "https://go.dev/dl/"},
+	}
+	user := fantasy.Message{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "Search."}}}
+	userJSON := `{"role":"user","content":[{"type":"input_text","text":"Search."}]}`
+	answer := fantasy.TextPart{Text: "Answer."}
+	answerJSON := `{"role":"assistant","content":"Answer."}`
+	searchJSON := `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["go release"]}}`
+	openPageJSON := `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`
+	reasoningJSON := `{"type":"reasoning","id":"rs_01","summary":[],"encrypted_content":"gAAAAABencrypted"}`
+
+	interleaved := slices.Concat(
+		webSearchCallParts("ws_01", search),
+		[]fantasy.MessagePart{reasoning},
+		webSearchCallParts("ws_02", openPage),
+		[]fantasy.MessagePart{answer},
+	)
+
+	tests := []struct {
+		name    string
+		store   bool
+		content []fantasy.MessagePart
+		want    string
+	}{
+		{
+			name:    "UnstoredInterleavedWithReasoning",
+			content: interleaved,
+			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
+		},
+		{
+			// Only a reasoning item may precede a referenced search. The
+			// SDK leaves out the optional item_reference type.
+			name:    "StoredInterleavedWithReasoning",
+			store:   true,
+			content: interleaved,
+			want:    `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+		},
+		{
+			name:    "UnstoredSearchOnly",
+			content: webSearchCallParts("ws_01", search),
+			want:    `[` + userJSON + `,` + searchJSON + `]`,
+		},
+		{
+			name: "UnstoredBeforeSearchActions",
+			content: append(
+				webSearchCallParts("ws_01", &WebSearchCallMetadata{
+					ItemID: "ws_01",
+					Action: &WebSearchAction{Type: "search", Query: "go release"},
+				}),
+				answer,
+			),
+			want: `[` + userJSON + `,{"type":"web_search_call","action":{"type":"search","query":"go release"}},` + answerJSON + `]`,
+		},
+		{
+			name: "UnstoredWithoutAction",
+			content: append(
+				webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: "completed"}),
+				answer,
+			),
+			want: `[` + userJSON + `,` + answerJSON + `]`,
+		},
+		{
+			name:    "UnstoredWithoutMetadata",
+			content: append(webSearchCallParts("ws_01", nil), answer),
+			want:    `[` + userJSON + `,` + answerJSON + `]`,
+		},
+		{
+			name: "UnstoredUnknownActionType",
+			content: append(
+				webSearchCallParts("ws_01", &WebSearchCallMetadata{
+					ItemID: "ws_01",
+					Status: "completed",
+					Action: &WebSearchAction{Type: "find", Pattern: "go1.27"},
+				}),
+				answer,
+			),
+			want: `[` + userJSON + `,` + answerJSON + `]`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			requireResponsesInputJSON(t, fantasy.Prompt{
+				user,
+				{Role: fantasy.MessageRoleAssistant, Content: tc.content},
+			}, tc.store, tc.want)
+		})
+	}
 }
