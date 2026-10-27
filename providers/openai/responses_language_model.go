@@ -613,8 +613,10 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
-			// Only the part right after a referenceable reasoning part
-			// can reference a stored search.
+			// referenceAt is the index of the part that can reference a
+			// stored search: the part right after a reasoning part from a
+			// stored response. It counts parts, not input items, so a skipped
+			// part still separates a search from its reasoning.
 			referenceAt := -1
 			for i, c := range msg.Content {
 				switch c.GetType() {
