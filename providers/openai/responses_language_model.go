@@ -612,6 +612,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 			startIdx := len(input)
 			canReferenceWebSearch := false
 			referencedSearches := make(map[string]bool)
+			inlinedSearches := make(map[string]bool)
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -645,7 +646,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					if toolCallPart.ProviderExecuted {
 						if store && canReferenceWebSearch &&
 							isResponsesWebSearchToolCall(toolCallPart) &&
-							toolCallPart.ToolCallID != "" {
+							toolCallPart.ToolCallID != "" &&
+							!inlinedSearches[toolCallPart.ToolCallID] {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
 							referencedSearches[toolCallPart.ToolCallID] = true
 						}
@@ -714,6 +716,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					input = append(input, item)
+					inlinedSearches[toolResultPart.ToolCallID] = true
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
@@ -925,9 +928,10 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 
 // inlineWebSearchCallItem rebuilds a web search call from its result
 // metadata, which unlike the call input keeps the status and the
-// deprecated single query. The item has no id: history from a stored turn
-// or another credential carries real ids, and the API replaces the sent
-// action with the stored item of that id.
+// deprecated single query. The item has no id: with an id, a stored
+// request resolves the stored item instead, which fails without its
+// reasoning item right before it and can resolve another credential's
+// item.
 func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {
 		return responses.ResponseInputItemUnionParam{}, errors.New("metadata has no action")

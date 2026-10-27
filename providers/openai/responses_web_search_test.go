@@ -19,9 +19,9 @@ type webSearchCallActionCase struct {
 	want      *WebSearchAction
 	wantInput string
 	wantFound []string
-	// wantReplay is the input item sent for the search when store is
-	// false.
-	wantReplay string
+	// wantInline is the input item sent for the search when it is not
+	// referenced.
+	wantInline string
 }
 
 var webSearchCallActionCases = []webSearchCallActionCase{
@@ -45,7 +45,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 		},
 		wantInput:  `{"type":"search","queries":["coder agents web search","openai responses sources"]}`,
 		wantFound:  []string{"https://coder.com/docs/ai-coder", "https://developers.openai.com/api/docs/guides/tools-web-search"},
-		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["coder agents web search","openai responses sources"]}}`,
+		wantInline: `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["coder agents web search","openai responses sources"]}}`,
 	},
 	{
 		name: "DeprecatedQuery",
@@ -58,7 +58,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Query: "latest AI news",
 		},
 		wantInput:  `{"type":"search","queries":["latest AI news"]}`,
-		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search","query":"latest AI news"}}`,
+		wantInline: `{"type":"web_search_call","status":"completed","action":{"type":"search","query":"latest AI news"}}`,
 	},
 	{
 		name: "NoQueries",
@@ -76,7 +76,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 		},
 		wantInput:  `{"type":"search"}`,
 		wantFound:  []string{"https://example.com/weather"},
-		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"search"}}`,
+		wantInline: `{"type":"web_search_call","status":"completed","action":{"type":"search"}}`,
 	},
 	{
 		name: "OpenPage",
@@ -89,7 +89,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			URL:  "https://go.dev/dl/",
 		},
 		wantInput:  `{"type":"open_page","url":"https://go.dev/dl/"}`,
-		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`,
+		wantInline: `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`,
 	},
 	{
 		name: "FindInPage",
@@ -104,7 +104,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Pattern: "go1.27",
 		},
 		wantInput:  `{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}`,
-		wantReplay: `{"type":"web_search_call","status":"completed","action":{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}}`,
+		wantInline: `{"type":"web_search_call","status":"completed","action":{"type":"find_in_page","url":"https://go.dev/doc/devel/release","pattern":"go1.27"}}`,
 	},
 	{
 		name:   "Failed",
@@ -118,7 +118,7 @@ var webSearchCallActionCases = []webSearchCallActionCase{
 			Queries: []string{"tokyo population"},
 		},
 		wantInput:  `{"type":"search","queries":["tokyo population"]}`,
-		wantReplay: `{"type":"web_search_call","status":"failed","action":{"type":"search","queries":["tokyo population"]}}`,
+		wantInline: `{"type":"web_search_call","status":"failed","action":{"type":"search","queries":["tokyo population"]}}`,
 	},
 }
 
@@ -480,7 +480,7 @@ func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
 			}
 			warnings := requireResponsesInputJSON(t, prompt, false, `[`+
 				`{"role":"user","content":[{"type":"input_text","text":"Search."}]},`+
-				tc.wantReplay+`,`+
+				tc.wantInline+`,`+
 				`{"role":"assistant","content":"Answer."}]`)
 			require.Empty(t, warnings)
 		})
@@ -563,6 +563,19 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			store:   true,
 			content: interleaved,
 			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+		},
+		{
+			// A caller-built prompt can put the result before its call;
+			// the search is then sent inline once and not also referenced.
+			name:  "StoredResultBeforeCall",
+			store: true,
+			content: []fantasy.MessagePart{
+				reasoning,
+				webSearchCallParts("ws_02", openPage)[1],
+				webSearchCallParts("ws_02", openPage)[0],
+				answer,
+			},
+			want: `[` + userJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
 			// A stored request cannot reference items from an unstored

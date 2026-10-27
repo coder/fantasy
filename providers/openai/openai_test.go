@@ -4696,7 +4696,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	t.Run("store false skips item reference", func(t *testing.T) {
+	t.Run("store false skips search without metadata", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
@@ -4710,7 +4710,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		require.Nil(t, input[1].OfItemReference)
 	})
 
-	t.Run("store true skips item reference", func(t *testing.T) {
+	t.Run("store true skips unreferenced search without metadata", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
@@ -4926,8 +4926,9 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Both reasoning and the provider-executed web_search_call
-		// are skipped under store=false. user, assistant text, user.
+		// Reasoning without encrypted content is skipped under
+		// store=false, and so is the web_search_call, whose result has
+		// no metadata to send inline. user, assistant text, user.
 		require.Len(t, input, 3)
 		for _, item := range input {
 			require.Nil(t, item.OfItemReference)
