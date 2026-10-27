@@ -494,9 +494,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	// A search's call and result parts can each replay it, possibly from
 	// different messages; only the first one does.
 	replayedSearches := make(map[string]bool)
-	// toolMessageSearches holds provider-executed results found in tool
-	// messages, in prompt order.
-	var toolMessageSearches []string
+	var dropped droppedSearches
 	for _, msg := range prompt {
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
@@ -714,18 +712,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					if meta == nil {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("dropping provider-executed tool result %q: it has no web search metadata", toolResultPart.ToolCallID),
-						})
+						dropped.add(searchID, "it has no web search metadata", false)
 						continue
 					}
 					item, err := inlineWebSearchCallItem(meta)
 					if err != nil {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("dropping web search %q: %v", meta.ItemID, err),
-						})
+						dropped.add(searchID, err.Error(), false)
 						continue
 					}
 					input = append(input, item)
@@ -767,8 +759,11 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				// assistant's items, so only the assistant branch can
 				// replay it.
 				if toolResultPart.ProviderExecuted {
-					_, searchID := webSearchResult(toolResultPart)
-					toolMessageSearches = append(toolMessageSearches, searchID)
+					if meta, searchID := webSearchResult(toolResultPart); meta == nil {
+						dropped.add(searchID, "it has no web search metadata", true)
+					} else {
+						dropped.add(searchID, "it is in a tool message, and is replayed only from an assistant message", true)
+					}
 					continue
 				}
 
@@ -892,15 +887,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
-	// An assistant message anywhere in the prompt may still replay them.
-	for _, id := range toolMessageSearches {
-		if !replayedSearches[id] {
-			warnings = append(warnings, fantasy.CallWarning{
-				Type:    fantasy.CallWarningTypeOther,
-				Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message: it is replayed only from an assistant message", id),
-			})
-		}
-	}
+	warnings = append(warnings, dropped.warnings(replayedSearches)...)
 
 	if err := validateResponsesInputWithOptions(input, allowUnpairedFunctionCallOutputs); err != nil {
 		return nil, warnings, err
@@ -952,6 +939,53 @@ func hasResponsesWebSearchTool(tools []responses.ToolUnionParam) bool {
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
+}
+
+// droppedSearches records why search results were not replayed, so that
+// each search the whole prompt never replays gets one warning. Another
+// part of the prompt can still replay a search, and a reason from an
+// assistant message is more specific than one from a tool message.
+type droppedSearches struct {
+	list  []droppedSearch
+	index map[string]int
+}
+
+type droppedSearch struct {
+	id              string
+	reason          string
+	fromToolMessage bool
+}
+
+func (d *droppedSearches) add(id, reason string, fromToolMessage bool) {
+	search := droppedSearch{id: id, reason: reason, fromToolMessage: fromToolMessage}
+	if i, ok := d.index[id]; ok {
+		if d.list[i].fromToolMessage && !fromToolMessage {
+			d.list[i] = search
+		}
+		return
+	}
+	// Searches without an id cannot be told apart, so each gets a warning.
+	if id != "" {
+		if d.index == nil {
+			d.index = make(map[string]int)
+		}
+		d.index[id] = len(d.list)
+	}
+	d.list = append(d.list, search)
+}
+
+func (d *droppedSearches) warnings(replayed map[string]bool) []fantasy.CallWarning {
+	var warnings []fantasy.CallWarning
+	for _, search := range d.list {
+		if search.id != "" && replayed[search.id] {
+			continue
+		}
+		warnings = append(warnings, fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("dropping web search %q: %s", search.id, search.reason),
+		})
+	}
+	return warnings
 }
 
 // webSearchResult returns a provider-executed result's web search

@@ -560,11 +560,12 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		store        bool
 		content      []fantasy.MessagePart
 		laterContent []fantasy.MessagePart
-		toolContent  []fantasy.MessagePart
-		// earlierToolContent is a tool message before the assistant message.
-		earlierToolContent []fantasy.MessagePart
-		want               string
-		wantWarning        string
+		// toolContentBefore and toolContentAfter are tool messages before
+		// the first assistant message and after the last one.
+		toolContentBefore []fantasy.MessagePart
+		toolContentAfter  []fantasy.MessagePart
+		want              string
+		wantWarning       string
 	}{
 		{
 			name:    "UnstoredInterleavedWithReasoning",
@@ -645,11 +646,11 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		},
 		{
 			// A result also kept in a tool message was already replayed.
-			name:        "StoredResultAlsoInToolMessage",
-			store:       true,
-			content:     []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
-			toolContent: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
-			want:        `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+			name:             "StoredResultAlsoInToolMessage",
+			store:            true,
+			content:          []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
+			toolContentAfter: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
+			want:             `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
 		},
 		{
 			name:         "StoredCallInLaterMessage",
@@ -676,12 +677,12 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			// The warning waits for the whole prompt: a later assistant
-			// message can still replay a search from a tool message.
-			name:               "UnstoredResultInEarlierToolMessage",
-			earlierToolContent: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
-			content:            []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1], answer},
-			want:               `[` + userJSON + `,` + searchJSON + `,` + answerJSON + `]`,
+			// No warning: the assistant message after the tool message
+			// replays the search.
+			name:              "UnstoredResultInEarlierToolMessage",
+			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			content:           []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1], answer},
+			want:              `[` + userJSON + `,` + searchJSON + `,` + answerJSON + `]`,
 		},
 		{
 			// A stored request cannot reference items from an unstored
@@ -733,7 +734,44 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			name:        "UnstoredWithoutMetadata",
 			content:     append(webSearchCallParts("ws_01", nil), answer),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
-			wantWarning: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
+			wantWarning: `dropping web search "ws_01": it has no web search metadata`,
+		},
+		{
+			// A part that can't replay a search doesn't warn when another
+			// part replays it.
+			name: "UnstoredUnreplayableThenReplayable",
+			content: []fantasy.MessagePart{
+				webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: "completed"})[1],
+				answer,
+			},
+			laterContent: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			want:         `[` + userJSON + `,` + answerJSON + `,` + searchJSON + `]`,
+		},
+		{
+			name: "UnstoredRepeatedWithoutMetadata",
+			content: []fantasy.MessagePart{
+				webSearchCallParts("ws_01", nil)[1],
+				webSearchCallParts("ws_01", nil)[1],
+				answer,
+			},
+			want:        `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning: `dropping web search "ws_01": it has no web search metadata`,
+		},
+		{
+			name:              "UnstoredRepeatedInToolMessages",
+			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			content:           []fantasy.MessagePart{answer},
+			toolContentAfter:  []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			want:              `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning:       `dropping web search "ws_01": it is in a tool message, and is replayed only from an assistant message`,
+		},
+		{
+			// The assistant message's reason wins over the tool message's.
+			name:              "UnstoredWithoutMetadataAlsoInToolMessage",
+			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			content:           []fantasy.MessagePart{webSearchCallParts("ws_01", nil)[1], answer},
+			want:              `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning:       `dropping web search "ws_01": it has no web search metadata`,
 		},
 		{
 			name: "UnstoredUnknownActionType",
@@ -754,15 +792,15 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			t.Parallel()
 
 			prompt := fantasy.Prompt{user}
-			if tc.earlierToolContent != nil {
-				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.earlierToolContent})
+			if tc.toolContentBefore != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.toolContentBefore})
 			}
 			prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.content})
 			if tc.laterContent != nil {
 				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.laterContent})
 			}
-			if tc.toolContent != nil {
-				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.toolContent})
+			if tc.toolContentAfter != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.toolContentAfter})
 			}
 			warnings := requireResponsesInputJSON(t, prompt, tc.store, tc.want)
 			var messages []string

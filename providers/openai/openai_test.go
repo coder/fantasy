@@ -4705,7 +4705,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
+			Message: `dropping web search "ws_01": it has no web search metadata`,
 		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=false")
@@ -4722,7 +4722,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
+			Message: `dropping web search "ws_01": it has no web search metadata`,
 		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=true")
@@ -4932,7 +4932,7 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping provider-executed tool result "ws_002": it has no web search metadata`,
+			Message: `dropping web search "ws_002": it has no web search metadata`,
 		}}, warnings)
 
 		// Reasoning without encrypted content is skipped under
