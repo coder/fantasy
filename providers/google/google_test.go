@@ -2,189 +2,103 @@ package google
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"charm.land/fantasy"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/genai"
 )
 
-func TestToGoogleTools_ConvertsFunctionInputSchema(t *testing.T) {
+func TestToolInputSchemaReachesRequest(t *testing.T) {
 	t.Parallel()
 
-	tools := []fantasy.Tool{
-		fantasy.FunctionTool{
-			Name: "schema_test",
-			InputSchema: map[string]any{
-				"type": "object",
-				"$defs": map[string]any{
-					"node": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"kind": map[string]any{
-								"type": "string",
-								"enum": []any{"leaf", "branch"},
-							},
-							"child": map[string]any{"$ref": "#/$defs/node"},
-						},
-						"required": []any{"kind"},
-					},
-				},
-				"properties": map[string]any{
-					"node": map[string]any{"$ref": "#/$defs/node"},
-					"choice": map[string]any{
-						"anyOf": []any{
-							map[string]any{"type": "string", "enum": []any{"a", "b"}},
-							map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"count": map[string]any{"type": "integer"},
-								},
-								"required": []any{"count"},
-							},
-						},
-					},
-				},
-				"required": []any{"node", "choice"},
-			},
+	// Each part of this schema is something the OpenAPI-style
+	// "parameters" field cannot carry: an untyped object root, local
+	// references with sibling keywords, a recursive definition, a
+	// numeric enum, a null alternative behind a reference, and
+	// additionalProperties.
+	const schemaJSON = `{
+		"properties": {
+			"filter": {"$ref": "#/$defs/Filter", "required": ["term"]},
+			"limit": {"type": "integer", "enum": [10, 20]},
+			"cursor": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/Null"}]}
 		},
-	}
-
-	declarations, _, warnings := toGoogleTools(tools, nil)
-	require.Empty(t, warnings)
-	require.Len(t, declarations, 1)
-
-	wire, err := json.Marshal(&genai.GenerateContentConfig{
-		Tools: []*genai.Tool{{FunctionDeclarations: declarations}},
-	})
-	require.NoError(t, err)
-
-	var payload struct {
-		Tools []struct {
-			FunctionDeclarations []struct {
-				Parameters map[string]any `json:"parameters"`
-			} `json:"functionDeclarations"`
-		} `json:"tools"`
-	}
-	require.NoError(t, json.Unmarshal(wire, &payload))
-	parameters := payload.Tools[0].FunctionDeclarations[0].Parameters
-	require.Equal(t, []any{"node", "choice"}, parameters["required"])
-
-	properties := parameters["properties"].(map[string]any)
-	node := properties["node"].(map[string]any)
-	require.Equal(t, "OBJECT", node["type"])
-	require.Equal(t, []any{"kind"}, node["required"])
-	nodeProperties := node["properties"].(map[string]any)
-	require.Equal(t, []any{"leaf", "branch"}, nodeProperties["kind"].(map[string]any)["enum"])
-	require.NotContains(t, nodeProperties, "child")
-
-	choice := properties["choice"].(map[string]any)
-	anyOf := choice["anyOf"].([]any)
-	require.Equal(t, []any{"a", "b"}, anyOf[0].(map[string]any)["enum"])
-	require.Equal(t, []any{"count"}, anyOf[1].(map[string]any)["required"])
-}
-
-func TestToGoogleTools_InlinesReferences(t *testing.T) {
-	t.Parallel()
-
-	tools := []fantasy.Tool{
-		fantasy.FunctionTool{
-			Name: "refs",
-			InputSchema: map[string]any{
+		"required": ["filter"],
+		"additionalProperties": false,
+		"$defs": {
+			"Filter": {
 				"type": "object",
-				"definitions": map[string]any{
-					"Filter": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"term": map[string]any{"type": "string"},
-						},
-						"required": []any{"term"},
-					},
-				},
-				"$defs": map[string]any{
-					"Text": map[string]any{"type": "string"},
-				},
-				"properties": map[string]any{
-					"filter":  map[string]any{"$ref": "#/definitions/Filter", "description": "Search filter"},
-					"encoded": map[string]any{"$ref": "#/%24defs/Text"},
-					"list": map[string]any{
-						"type":  "array",
-						"items": map[string]any{"$ref": "#/$defs/Text"},
-					},
-					"self":     map[string]any{"$ref": "#"},
-					"dangling": map[string]any{"$ref": "#/$defs/Missing"},
-					"optional": map[string]any{
-						"anyOf": []any{
-							map[string]any{"type": "integer"},
-							map[string]any{"type": "null"},
-						},
-					},
-					"untyped": map[string]any{"description": "anything"},
-				},
-				"required": []any{"filter", "dangling", "self"},
+				"properties": {
+					"term": {"type": "string"},
+					"and": {"type": "array", "items": {"$ref": "#/$defs/Filter"}}
+				}
 			},
-		},
-	}
+			"Null": {"type": "null"}
+		}
+	}`
 
-	declarations, _, warnings := toGoogleTools(tools, nil)
-	require.Empty(t, warnings)
-	require.Len(t, declarations, 1)
-	parameters := declarations[0].Parameters
+	for _, tc := range []struct {
+		name    string
+		options []Option
+	}{
+		{name: "gemini", options: []Option{WithGeminiAPIKey("test-key")}},
+		{name: "vertex", options: []Option{WithVertex("test-project", "us-central1"), WithSkipAuth(true)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Equal(t, genai.TypeObject, parameters.Type)
-	// Recursive and unresolvable references are removed, together with
-	// their required entries, rather than sent as strings.
-	require.Equal(t, []string{"filter"}, parameters.Required)
-	require.NotContains(t, parameters.Properties, "self")
-	require.NotContains(t, parameters.Properties, "dangling")
+			var inputSchema map[string]any
+			require.NoError(t, json.Unmarshal([]byte(schemaJSON), &inputSchema))
 
-	filter := parameters.Properties["filter"]
-	require.Equal(t, genai.TypeObject, filter.Type)
-	require.Equal(t, "Search filter", filter.Description)
-	require.Equal(t, []string{"term"}, filter.Required)
-	require.Equal(t, genai.TypeString, filter.Properties["term"].Type)
+			bodies := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				bodies <- body
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}`)
+			}))
+			defer server.Close()
 
-	require.Equal(t, genai.TypeString, parameters.Properties["encoded"].Type)
-	require.Equal(t, genai.TypeString, parameters.Properties["list"].Items.Type)
+			provider, err := New(append(tc.options, WithBaseURL(server.URL))...)
+			require.NoError(t, err)
+			model, err := provider.LanguageModel(t.Context(), "gemini-2.5-flash")
+			require.NoError(t, err)
 
-	optional := parameters.Properties["optional"]
-	require.Equal(t, genai.TypeInteger, optional.Type)
-	require.NotNil(t, optional.Nullable)
-	require.True(t, *optional.Nullable)
-	require.Empty(t, optional.AnyOf)
-
-	require.Equal(t, genai.TypeString, parameters.Properties["untyped"].Type)
-}
-
-func TestToGoogleTools_DropsArrayWithRecursiveItems(t *testing.T) {
-	t.Parallel()
-
-	tools := []fantasy.Tool{
-		fantasy.FunctionTool{
-			Name: "tree",
-			InputSchema: map[string]any{
-				"type": "object",
-				"$defs": map[string]any{
-					"Node": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"name":     map[string]any{"type": "string"},
-							"children": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/$defs/Node"}},
-						},
-					},
+			_, err = model.Generate(t.Context(), fantasy.Call{
+				Prompt: fantasy.Prompt{{
+					Role:    fantasy.MessageRoleUser,
+					Content: []fantasy.MessagePart{fantasy.TextPart{Text: "search"}},
+				}},
+				Tools: []fantasy.Tool{
+					fantasy.FunctionTool{Name: "search", InputSchema: inputSchema},
+					fantasy.FunctionTool{Name: "ping"},
 				},
-				"properties": map[string]any{
-					"root": map[string]any{"$ref": "#/$defs/Node"},
-				},
-			},
-		},
-	}
+			})
+			require.NoError(t, err)
 
-	declarations, _, _ := toGoogleTools(tools, nil)
-	root := declarations[0].Parameters.Properties["root"]
-	require.Equal(t, genai.TypeObject, root.Type)
-	require.Contains(t, root.Properties, "name")
-	// An array whose items recurse cannot be expressed and would be
-	// rejected without items, so the property is left out.
-	require.NotContains(t, root.Properties, "children")
+			var request struct {
+				Tools []struct {
+					FunctionDeclarations []map[string]json.RawMessage `json:"functionDeclarations"`
+				} `json:"tools"`
+			}
+			require.NoError(t, json.Unmarshal(<-bodies, &request))
+			require.Len(t, request.Tools, 1)
+			declarations := request.Tools[0].FunctionDeclarations
+			require.Len(t, declarations, 2)
+
+			require.NotContains(t, declarations[0], "parameters")
+			require.JSONEq(t, schemaJSON, string(declarations[0]["parametersJsonSchema"]))
+
+			// A tool without a schema declares no parameters rather than
+			// a null schema.
+			require.NotContains(t, declarations[1], "parameters")
+			require.NotContains(t, declarations[1], "parametersJsonSchema")
+		})
+	}
 }
