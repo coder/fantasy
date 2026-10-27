@@ -491,6 +491,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
+	// A search's call and result parts can each replay it, possibly from
+	// different messages; only the first one does.
+	replayedSearches := make(map[string]bool)
 	for _, msg := range prompt {
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
@@ -610,10 +613,10 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
-			canReferenceWebSearch := false
-			referencedSearches := make(map[string]bool)
-			inlinedSearches := make(map[string]bool)
-			for _, c := range msg.Content {
+			// Only the part right after a referenceable reasoning part
+			// can reference a stored search.
+			referenceAt := -1
+			for i, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
 					textPart, ok := fantasy.AsContentType[fantasy.TextPart](c)
@@ -631,7 +634,6 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						message.OfMessage.Phase = responses.EasyInputMessagePhase(metadata.Phase)
 					}
 					input = append(input, message)
-					canReferenceWebSearch = false
 
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
@@ -644,14 +646,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					if toolCallPart.ProviderExecuted {
-						if store && canReferenceWebSearch &&
+						if store && referenceAt == i &&
 							isResponsesWebSearchToolCall(toolCallPart) &&
 							toolCallPart.ToolCallID != "" &&
-							!inlinedSearches[toolCallPart.ToolCallID] {
+							!replayedSearches[toolCallPart.ToolCallID] {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
-							referencedSearches[toolCallPart.ToolCallID] = true
+							replayedSearches[toolCallPart.ToolCallID] = true
 						}
-						canReferenceWebSearch = false
 						continue
 					}
 
@@ -666,13 +667,11 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(toolCallPart.Input, toolCallPart.ToolCallID, toolCallPart.ToolName))
-					canReferenceWebSearch = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					canReferenceWebSearch = false
 					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
 					if !ok {
 						warnings = append(warnings, fantasy.CallWarning{
@@ -695,12 +694,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					// Item-reference replay predates source storage metadata.
-					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
+					if !meta.Finalized || meta.SourceStoreEnabled {
+						referenceAt = i + 1
+					}
 					continue
 				case fantasy.ContentTypeToolResult:
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
-					// A referenced search already replays its stored item.
-					if !ok || !toolResultPart.ProviderExecuted || referencedSearches[toolResultPart.ToolCallID] {
+					if !ok || !toolResultPart.ProviderExecuted || replayedSearches[toolResultPart.ToolCallID] {
 						continue
 					}
 					meta, ok := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
@@ -716,8 +716,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					input = append(input, item)
-					inlinedSearches[toolResultPart.ToolCallID] = true
-					canReferenceWebSearch = false
+					if toolResultPart.ToolCallID != "" {
+						replayedSearches[toolResultPart.ToolCallID] = true
+					}
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {

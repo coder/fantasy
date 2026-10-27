@@ -522,6 +522,12 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	searchJSON := `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["go release"]}}`
 	openPageJSON := `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`
 	reasoningJSON := `{"type":"reasoning","id":"rs_01","summary":[],"encrypted_content":"gAAAAABencrypted"}`
+	computerCallJSON := `{"type":"computer_call","id":"cu_01","call_id":"call_01","status":"completed","action":{"type":"screenshot"},"pending_safety_checks":[]}`
+	computerCall := fantasy.ToolCallPart{
+		ToolCallID:      "call_01",
+		ToolName:        "computer",
+		ProviderOptions: fantasy.ProviderOptions{Name: &ComputerUseMetadata{RawJSON: computerCallJSON}},
+	}
 
 	interleaved := slices.Concat(
 		webSearchCallParts("ws_01", search),
@@ -544,9 +550,11 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	)
 
 	tests := []struct {
-		name        string
-		store       bool
-		content     []fantasy.MessagePart
+		name    string
+		store   bool
+		content []fantasy.MessagePart
+		// later is a second assistant message.
+		later       []fantasy.MessagePart
 		want        string
 		wantWarning string
 	}{
@@ -591,6 +599,56 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				answer,
 			},
 			want: `[` + userJSON + `,` + reasoningJSON + `,` + searchJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
+		},
+		{
+			name:  "StoredComputerCallBeforeCall",
+			store: true,
+			content: slices.Concat(
+				[]fantasy.MessagePart{reasoning, computerCall},
+				webSearchCallParts("ws_02", openPage),
+			),
+			want: `[` + userJSON + `,` + reasoningJSON + `,` + computerCallJSON + `,` + openPageJSON + `]`,
+		},
+		{
+			// A skipped part between reasoning and a call also means the
+			// call does not follow its reasoning.
+			name:  "StoredSkippedPartBeforeCall",
+			store: true,
+			content: slices.Concat(
+				[]fantasy.MessagePart{reasoning, fantasy.ReasoningPart{Text: "No metadata."}},
+				webSearchCallParts("ws_02", openPage),
+			),
+			want: `[` + userJSON + `,` + reasoningJSON + `,` + openPageJSON + `]`,
+		},
+		{
+			name: "UnstoredRepeatedParts",
+			content: slices.Concat(
+				webSearchCallParts("ws_01", search),
+				webSearchCallParts("ws_01", search),
+			),
+			want: `[` + userJSON + `,` + searchJSON + `]`,
+		},
+		{
+			name:    "StoredResultInLaterMessage",
+			store:   true,
+			content: []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0]},
+			later:   []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1], answer},
+			want:    `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+		},
+		{
+			name:    "StoredCallInLaterMessage",
+			store:   true,
+			content: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
+			later:   []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
+			want:    `[` + userJSON + `,` + openPageJSON + `,` + reasoningJSON + `,` + answerJSON + `]`,
+		},
+		{
+			name: "UnstoredWithoutIDs",
+			content: []fantasy.MessagePart{
+				webSearchCallParts("", search)[1],
+				webSearchCallParts("", openPage)[1],
+			},
+			want: `[` + userJSON + `,` + searchJSON + `,` + openPageJSON + `]`,
 		},
 		{
 			// A stored request cannot reference items from an unstored
@@ -661,10 +719,14 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			warnings := requireResponsesInputJSON(t, fantasy.Prompt{
+			prompt := fantasy.Prompt{
 				user,
 				{Role: fantasy.MessageRoleAssistant, Content: tc.content},
-			}, tc.store, tc.want)
+			}
+			if tc.later != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.later})
+			}
+			warnings := requireResponsesInputJSON(t, prompt, tc.store, tc.want)
 			var messages []string
 			for _, warning := range warnings {
 				messages = append(messages, warning.Message)
