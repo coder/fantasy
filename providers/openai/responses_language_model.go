@@ -753,9 +753,14 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					continue
 				}
 
-				// Provider-executed tool results (e.g. web search)
-				// are replayed from the assistant message.
+				// Provider-executed tool results (e.g. web search) are
+				// replayed from the assistant message; here their place
+				// among its items is lost.
 				if toolResultPart.ProviderExecuted {
+					warnings = append(warnings, fantasy.CallWarning{
+						Type:    fantasy.CallWarningTypeOther,
+						Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message", toolResultPart.ToolCallID),
+					})
 					continue
 				}
 
