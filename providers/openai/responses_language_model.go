@@ -694,7 +694,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
 					continue
 				case fantasy.ContentTypeToolResult:
-					// Stored searches replay as item references from the tool call.
+					// With store, the tool call sends a reference or nothing.
 					if store {
 						continue
 					}
@@ -702,10 +702,19 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					if !ok || !toolResultPart.ProviderExecuted {
 						continue
 					}
-					meta, _ := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
-					if item, ok := unstoredWebSearchCallItem(meta); ok {
-						input = append(input, item)
+					meta, ok := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
+					if !ok || meta == nil {
+						continue
 					}
+					item, ok := unstoredWebSearchCallItem(meta)
+					if !ok {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: fmt.Sprintf("dropping web search %q: it has no replayable action", meta.ItemID),
+						})
+						continue
+					}
+					input = append(input, item)
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
@@ -738,7 +747,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				}
 
 				// Provider-executed tool results (e.g. web search)
-				// are replayed from the assistant message; skip.
+				// are replayed from the assistant message.
 				if toolResultPart.ProviderExecuted {
 					continue
 				}
@@ -917,11 +926,12 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 
 // unstoredWebSearchCallItem rebuilds a web search call from its result
 // metadata, which unlike the call input keeps the status and the
-// deprecated single query. The item has no id: with an id, a stored item
-// of that id replaces the sent action. Sources are left out because the
-// API ignores them on input.
+// deprecated single query. The item has no id: history from a stored turn
+// or another credential carries real ids, and the API replaces the sent
+// action with the stored item of that id. Sources are left out because
+// the API ignores them on input.
 func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, bool) {
-	if meta == nil || meta.Action == nil {
+	if meta.Action == nil {
 		return responses.ResponseInputItemUnionParam{}, false
 	}
 	// The API rejects the whole request for any other action type.
@@ -930,32 +940,13 @@ func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseI
 	default:
 		return responses.ResponseInputItemUnionParam{}, false
 	}
-	type action struct {
-		Type    string   `json:"type"`
-		Queries []string `json:"queries,omitempty"`
-		Query   string   `json:"query,omitempty"`
-		URL     string   `json:"url,omitempty"`
-		Pattern string   `json:"pattern,omitempty"`
-	}
-	encoded, err := json.Marshal(struct {
-		Type   string `json:"type"`
-		Status string `json:"status,omitempty"`
-		Action action `json:"action"`
-	}{
-		Type:   "web_search_call",
-		Status: meta.Status,
-		Action: action{
-			Type:    meta.Action.Type,
-			Queries: meta.Action.Queries,
-			Query:   meta.Action.Query,
-			URL:     meta.Action.URL,
-			Pattern: meta.Action.Pattern,
-		},
-	})
-	if err != nil {
-		return responses.ResponseInputItemUnionParam{}, false
-	}
-	item := param.Override[responses.ResponseFunctionWebSearchParam](json.RawMessage(encoded))
+	action := *meta.Action
+	action.Sources = nil
+	item := param.Override[responses.ResponseFunctionWebSearchParam](struct {
+		Type   string           `json:"type"`
+		Status string           `json:"status,omitempty"`
+		Action *WebSearchAction `json:"action"`
+	}{Type: "web_search_call", Status: meta.Status, Action: &action})
 	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, true
 }
 

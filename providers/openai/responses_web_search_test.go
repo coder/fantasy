@@ -453,15 +453,15 @@ func webSearchCallParts(id string, meta *WebSearchCallMetadata) []fantasy.Messag
 	}
 }
 
-func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, want string) {
+func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, want string) []fantasy.CallWarning {
 	t.Helper()
 
 	input, warnings, err := toResponsesPrompt(prompt, "system", store)
 	require.NoError(t, err)
-	require.Empty(t, warnings)
 	encoded, err := json.Marshal(input)
 	require.NoError(t, err)
 	require.JSONEq(t, want, string(encoded))
+	return warnings
 }
 
 func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
@@ -478,10 +478,11 @@ func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
 					fantasy.TextPart{Text: "Answer."},
 				)},
 			}
-			requireResponsesInputJSON(t, prompt, false, `[`+
+			warnings := requireResponsesInputJSON(t, prompt, false, `[`+
 				`{"role":"user","content":[{"type":"input_text","text":"Search."}]},`+
 				tc.wantReplay+`,`+
 				`{"role":"assistant","content":"Answer."}]`)
+			require.Empty(t, warnings)
 		})
 	}
 }
@@ -530,10 +531,11 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	)
 
 	tests := []struct {
-		name    string
-		store   bool
-		content []fantasy.MessagePart
-		want    string
+		name        string
+		store       bool
+		content     []fantasy.MessagePart
+		want        string
+		wantWarning string
 	}{
 		{
 			name:    "UnstoredInterleavedWithReasoning",
@@ -554,7 +556,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:    `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name: "UnstoredBeforeSearchActions",
+			name: "UnstoredPre62SearchWithoutStatus",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",
@@ -565,12 +567,26 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,{"type":"web_search_call","action":{"type":"search","query":"go release"}},` + answerJSON + `]`,
 		},
 		{
+			// Before #62 only Type and Query were saved. The API accepts a
+			// find_in_page action without url and pattern.
+			name: "UnstoredPre62FindInPageWithoutStatus",
+			content: append(
+				webSearchCallParts("ws_01", &WebSearchCallMetadata{
+					ItemID: "ws_01",
+					Action: &WebSearchAction{Type: "find_in_page"},
+				}),
+				answer,
+			),
+			want: `[` + userJSON + `,{"type":"web_search_call","action":{"type":"find_in_page"}},` + answerJSON + `]`,
+		},
+		{
 			name: "UnstoredWithoutAction",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: "completed"}),
 				answer,
 			),
-			want: `[` + userJSON + `,` + answerJSON + `]`,
+			want:        `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning: `dropping web search "ws_01": it has no replayable action`,
 		},
 		{
 			name:    "UnstoredWithoutMetadata",
@@ -587,17 +603,27 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				}),
 				answer,
 			),
-			want: `[` + userJSON + `,` + answerJSON + `]`,
+			want:        `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning: `dropping web search "ws_01": it has no replayable action`,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			requireResponsesInputJSON(t, fantasy.Prompt{
+			warnings := requireResponsesInputJSON(t, fantasy.Prompt{
 				user,
 				{Role: fantasy.MessageRoleAssistant, Content: tc.content},
 			}, tc.store, tc.want)
+			var messages []string
+			for _, warning := range warnings {
+				messages = append(messages, warning.Message)
+			}
+			if tc.wantWarning == "" {
+				require.Empty(t, messages)
+			} else {
+				require.Equal(t, []string{tc.wantWarning}, messages)
+			}
 		})
 	}
 }
