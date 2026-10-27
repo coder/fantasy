@@ -593,11 +593,15 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 	t.Run("provider executed output does not satisfy local call", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := lm.prepareParams(testCall(fantasy.Prompt{
+		_, warnings, err := lm.prepareParams(testCall(fantasy.Prompt{
 			testResponsesToolCallMessage("call_provider_result"),
 			testResponsesProviderToolResultMessage("call_provider_result"),
 		}, nil))
 		require.EqualError(t, err, `openai responses prompt has function_call without function_call_output for call_id "call_provider_result"`)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping provider-executed tool result "call_provider_result" from a tool message`,
+		}}, warnings)
 	})
 }
 
