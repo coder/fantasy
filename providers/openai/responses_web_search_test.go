@@ -529,6 +529,19 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		webSearchCallParts("ws_02", openPage),
 		[]fantasy.MessagePart{answer},
 	)
+	unstoredReasoning := reasoning
+	unstoredReasoning.ProviderOptions = fantasy.ProviderOptions{Name: &ResponsesReasoningMetadata{
+		ItemID:           "rs_01",
+		EncryptedContent: &encrypted,
+		Summary:          []string{},
+		Finalized:        true,
+	}}
+	interleavedFromUnstored := slices.Concat(
+		webSearchCallParts("ws_01", search),
+		[]fantasy.MessagePart{unstoredReasoning},
+		webSearchCallParts("ws_02", openPage),
+		[]fantasy.MessagePart{answer},
+	)
 
 	tests := []struct {
 		name        string
@@ -543,12 +556,21 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
-			// Only a reasoning item may precede a referenced search. The
-			// SDK leaves out the optional item_reference type.
+			// Only a search right after its reasoning item is referenced;
+			// the first one is sent inline. The SDK leaves out the
+			// optional item_reference type.
 			name:    "StoredInterleavedWithReasoning",
 			store:   true,
 			content: interleaved,
-			want:    `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+		},
+		{
+			// A stored request cannot reference items from an unstored
+			// response.
+			name:    "StoredRequestUnstoredSource",
+			store:   true,
+			content: interleavedFromUnstored,
+			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
 			name:    "UnstoredSearchOnly",

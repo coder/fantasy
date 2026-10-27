@@ -611,6 +611,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
 			canReferenceWebSearch := false
+			referencedSearches := make(map[string]bool)
 			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
@@ -646,6 +647,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 							isResponsesWebSearchToolCall(toolCallPart) &&
 							toolCallPart.ToolCallID != "" {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
+							referencedSearches[toolCallPart.ToolCallID] = true
 						}
 						canReferenceWebSearch = false
 						continue
@@ -694,19 +696,16 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
 					continue
 				case fantasy.ContentTypeToolResult:
-					// With store, the tool call sends a reference or nothing.
-					if store {
-						continue
-					}
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
-					if !ok || !toolResultPart.ProviderExecuted {
+					// A referenced search already replays its stored item.
+					if !ok || !toolResultPart.ProviderExecuted || referencedSearches[toolResultPart.ToolCallID] {
 						continue
 					}
 					meta, ok := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
 					if !ok || meta == nil {
 						continue
 					}
-					item, err := unstoredWebSearchCallItem(meta)
+					item, err := inlineWebSearchCallItem(meta)
 					if err != nil {
 						warnings = append(warnings, fantasy.CallWarning{
 							Type:    fantasy.CallWarningTypeOther,
@@ -924,12 +923,12 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 		toolCallPart.ToolName == "web_search_preview"
 }
 
-// unstoredWebSearchCallItem rebuilds a web search call from its result
+// inlineWebSearchCallItem rebuilds a web search call from its result
 // metadata, which unlike the call input keeps the status and the
 // deprecated single query. The item has no id: history from a stored turn
 // or another credential carries real ids, and the API replaces the sent
 // action with the stored item of that id.
-func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
+func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {
 		return responses.ResponseInputItemUnionParam{}, errors.New("metadata has no action")
 	}
