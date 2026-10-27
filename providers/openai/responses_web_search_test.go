@@ -550,13 +550,12 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	)
 
 	tests := []struct {
-		name    string
-		store   bool
-		content []fantasy.MessagePart
-		// later is a second assistant message.
-		later       []fantasy.MessagePart
-		want        string
-		wantWarning string
+		name         string
+		store        bool
+		content      []fantasy.MessagePart
+		laterContent []fantasy.MessagePart
+		want         string
+		wantWarning  string
 	}{
 		{
 			name:    "UnstoredInterleavedWithReasoning",
@@ -629,18 +628,18 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name:    "StoredResultInLaterMessage",
-			store:   true,
-			content: []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0]},
-			later:   []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1], answer},
-			want:    `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+			name:         "StoredResultInLaterMessage",
+			store:        true,
+			content:      []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0]},
+			laterContent: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1], answer},
+			want:         `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
 		},
 		{
-			name:    "StoredCallInLaterMessage",
-			store:   true,
-			content: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
-			later:   []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
-			want:    `[` + userJSON + `,` + openPageJSON + `,` + reasoningJSON + `,` + answerJSON + `]`,
+			name:         "StoredCallInLaterMessage",
+			store:        true,
+			content:      []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
+			laterContent: []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
+			want:         `[` + userJSON + `,` + openPageJSON + `,` + reasoningJSON + `,` + answerJSON + `]`,
 		},
 		{
 			name: "UnstoredWithoutIDs",
@@ -723,8 +722,8 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				user,
 				{Role: fantasy.MessageRoleAssistant, Content: tc.content},
 			}
-			if tc.later != nil {
-				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.later})
+			if tc.laterContent != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.laterContent})
 			}
 			warnings := requireResponsesInputJSON(t, prompt, tc.store, tc.want)
 			var messages []string
