@@ -453,6 +453,12 @@ func webSearchCallParts(id string, meta *WebSearchCallMetadata) []fantasy.Messag
 	}
 }
 
+func withoutItemID(meta *WebSearchCallMetadata) *WebSearchCallMetadata {
+	copied := *meta
+	copied.ItemID = ""
+	return &copied
+}
+
 func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, want string) []fantasy.CallWarning {
 	t.Helper()
 
@@ -555,8 +561,10 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		content      []fantasy.MessagePart
 		laterContent []fantasy.MessagePart
 		toolContent  []fantasy.MessagePart
-		want         string
-		wantWarning  string
+		// earlierToolContent is a tool message before the assistant message.
+		earlierToolContent []fantasy.MessagePart
+		want               string
+		wantWarning        string
 	}{
 		{
 			name:    "UnstoredInterleavedWithReasoning",
@@ -653,10 +661,27 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		{
 			name: "UnstoredWithoutIDs",
 			content: []fantasy.MessagePart{
-				webSearchCallParts("", search)[1],
-				webSearchCallParts("", openPage)[1],
+				webSearchCallParts("", withoutItemID(search))[1],
+				webSearchCallParts("", withoutItemID(openPage))[1],
 			},
 			want: `[` + userJSON + `,` + searchJSON + `,` + openPageJSON + `]`,
+		},
+		{
+			// Without a call ID, the metadata's item ID identifies the search.
+			name: "UnstoredRepeatedResultWithoutCallID",
+			content: []fantasy.MessagePart{
+				webSearchCallParts("", search)[1],
+				webSearchCallParts("", search)[1],
+			},
+			want: `[` + userJSON + `,` + searchJSON + `]`,
+		},
+		{
+			// The warning waits for the whole prompt: a later assistant
+			// message can still replay a search from a tool message.
+			name:               "UnstoredResultInEarlierToolMessage",
+			earlierToolContent: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
+			content:            []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1], answer},
+			want:               `[` + userJSON + `,` + searchJSON + `,` + answerJSON + `]`,
 		},
 		{
 			// A stored request cannot reference items from an unstored
@@ -728,10 +753,11 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			prompt := fantasy.Prompt{
-				user,
-				{Role: fantasy.MessageRoleAssistant, Content: tc.content},
+			prompt := fantasy.Prompt{user}
+			if tc.earlierToolContent != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.earlierToolContent})
 			}
+			prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.content})
 			if tc.laterContent != nil {
 				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.laterContent})
 			}

@@ -494,6 +494,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 	// A search's call and result parts can each replay it, possibly from
 	// different messages; only the first one does.
 	replayedSearches := make(map[string]bool)
+	// toolMessageSearches holds provider-executed results found in tool
+	// messages, in prompt order.
+	var toolMessageSearches []string
 	for _, msg := range prompt {
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
@@ -703,11 +706,14 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					continue
 				case fantasy.ContentTypeToolResult:
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
-					if !ok || !toolResultPart.ProviderExecuted || replayedSearches[toolResultPart.ToolCallID] {
+					if !ok || !toolResultPart.ProviderExecuted {
 						continue
 					}
-					meta, ok := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
-					if !ok || meta == nil {
+					meta, searchID := webSearchResult(toolResultPart)
+					if replayedSearches[searchID] {
+						continue
+					}
+					if meta == nil {
 						warnings = append(warnings, fantasy.CallWarning{
 							Type:    fantasy.CallWarningTypeOther,
 							Message: fmt.Sprintf("dropping provider-executed tool result %q: it has no web search metadata", toolResultPart.ToolCallID),
@@ -723,8 +729,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					input = append(input, item)
-					if toolResultPart.ToolCallID != "" {
-						replayedSearches[toolResultPart.ToolCallID] = true
+					if searchID != "" {
+						replayedSearches[searchID] = true
 					}
 				}
 			}
@@ -761,12 +767,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 				// assistant's items, so only the assistant branch can
 				// replay it.
 				if toolResultPart.ProviderExecuted {
-					if !replayedSearches[toolResultPart.ToolCallID] {
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message: it is replayed only from an assistant message", toolResultPart.ToolCallID),
-						})
-					}
+					_, searchID := webSearchResult(toolResultPart)
+					toolMessageSearches = append(toolMessageSearches, searchID)
 					continue
 				}
 
@@ -890,6 +892,16 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
+	// An assistant message anywhere in the prompt may still replay them.
+	for _, id := range toolMessageSearches {
+		if !replayedSearches[id] {
+			warnings = append(warnings, fantasy.CallWarning{
+				Type:    fantasy.CallWarningTypeOther,
+				Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message: it is replayed only from an assistant message", id),
+			})
+		}
+	}
+
 	if err := validateResponsesInputWithOptions(input, allowUnpairedFunctionCallOutputs); err != nil {
 		return nil, warnings, err
 	}
@@ -940,6 +952,17 @@ func hasResponsesWebSearchTool(tools []responses.ToolUnionParam) bool {
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
+}
+
+// webSearchResult returns a provider-executed result's web search
+// metadata, if any, and the id of its search. A caller-built result can
+// leave the call ID empty while its metadata still names the search.
+func webSearchResult(part fantasy.ToolResultPart) (*WebSearchCallMetadata, string) {
+	meta, _ := part.ProviderOptions[Name].(*WebSearchCallMetadata)
+	if part.ToolCallID == "" && meta != nil {
+		return meta, meta.ItemID
+	}
+	return meta, part.ToolCallID
 }
 
 // inlineWebSearchCallItem rebuilds a web search call from its result
