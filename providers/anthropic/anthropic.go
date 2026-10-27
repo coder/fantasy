@@ -1698,6 +1698,7 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 						ID:         item.URL,
 						URL:        item.URL,
 						Title:      item.Title,
+						ToolCallID: webSearchResult.ToolUseID,
 					})
 					metadataResults = append(metadataResults, WebSearchResultItem{
 						URL:              item.URL,
@@ -1887,11 +1888,12 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					if items := contentBlock.Content.OfWebSearchResultBlockArray; len(items) > 0 {
 						for _, item := range items {
 							if !yield(fantasy.StreamPart{
-								Type:       fantasy.StreamPartTypeSource,
-								ID:         item.URL,
-								SourceType: fantasy.SourceTypeURL,
-								URL:        item.URL,
-								Title:      item.Title,
+								Type:             fantasy.StreamPartTypeSource,
+								ID:               item.URL,
+								SourceType:       fantasy.SourceTypeURL,
+								URL:              item.URL,
+								Title:            item.Title,
+								SourceToolCallID: contentBlock.ToolUseID,
 							}) {
 								return
 							}
