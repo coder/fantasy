@@ -578,6 +578,21 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
+			// An inline item between reasoning and a call means the call
+			// no longer follows its reasoning, so it is not referenced.
+			name:  "StoredInlineBeforeOtherCall",
+			store: true,
+			content: []fantasy.MessagePart{
+				reasoning,
+				webSearchCallParts("ws_01", search)[1],
+				webSearchCallParts("ws_02", openPage)[0],
+				webSearchCallParts("ws_02", openPage)[1],
+				webSearchCallParts("ws_01", search)[0],
+				answer,
+			},
+			want: `[` + userJSON + `,` + reasoningJSON + `,` + searchJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
+		},
+		{
 			// A stored request cannot reference items from an unstored
 			// response.
 			name:    "StoredRequestUnstoredSource",

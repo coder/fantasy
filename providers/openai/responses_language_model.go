@@ -717,6 +717,7 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 					input = append(input, item)
 					inlinedSearches[toolResultPart.ToolCallID] = true
+					canReferenceWebSearch = false
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
