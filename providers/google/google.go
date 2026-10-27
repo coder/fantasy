@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"charm.land/fantasy"
@@ -1238,24 +1240,11 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 				continue
 			}
 
-			var required []string
-			var properties map[string]any
-			if props, ok := ft.InputSchema["properties"]; ok {
-				properties, _ = props.(map[string]any)
-			}
-			if req, ok := ft.InputSchema["required"]; ok {
-				if reqArr, ok := req.([]string); ok {
-					required = reqArr
-				}
-			}
+			parameters := toolParametersSchema(ft.InputSchema)
 			declaration := &genai.FunctionDeclaration{
 				Name:        ft.Name,
 				Description: ft.Description,
-				Parameters: &genai.Schema{
-					Type:       genai.TypeObject,
-					Properties: convertSchemaProperties(properties),
-					Required:   required,
-				},
+				Parameters:  parameters,
 			}
 			googleTools = append(googleTools, declaration)
 			continue
@@ -1302,59 +1291,231 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 	return googleTools, googleToolChoice, warnings
 }
 
-func convertSchemaProperties(parameters map[string]any) map[string]*genai.Schema {
-	properties := make(map[string]*genai.Schema)
+// maxSchemaRefDepth bounds how many local "$ref" hops one schema path may
+// inline, so a long reference chain cannot expand without limit.
+const maxSchemaRefDepth = 32
 
-	for name, param := range parameters {
-		properties[name] = convertToSchema(param)
+// toolParametersSchema converts a JSON Schema tool input into the
+// OpenAPI-style genai.Schema subset Gemini accepts in "parameters".
+// genai.Schema cannot express "$ref", so local references are inlined;
+// a reference that is recursive, too deep, or unresolvable removes the
+// property, array, or alternative that uses it instead of degrading it
+// to a string.
+func toolParametersSchema(inputSchema map[string]any) *genai.Schema {
+	converter := schemaConverter{
+		root: inputSchema,
+		// The root is being converted, so "#" is already recursive.
+		resolving: map[string]struct{}{"#": {}},
 	}
-
-	return properties
+	parameters := converter.convert(inputSchema, 0)
+	if parameters == nil {
+		parameters = &genai.Schema{}
+	}
+	if parameters.Type == "" && len(parameters.AnyOf) == 0 {
+		parameters.Type = genai.TypeObject
+	}
+	return parameters
 }
 
-func convertToSchema(param any) *genai.Schema {
-	schema := &genai.Schema{Type: genai.TypeString}
+type schemaConverter struct {
+	root map[string]any
+	// resolving holds the references being inlined on the current path;
+	// meeting one again means the schema is recursive.
+	resolving map[string]struct{}
+}
 
+// convert returns nil when the schema cannot be represented.
+func (c *schemaConverter) convert(param any, depth int) *genai.Schema {
 	paramMap, ok := param.(map[string]any)
 	if !ok {
-		return schema
+		// Boolean schemas and other non-object values accept anything.
+		return &genai.Schema{Type: genai.TypeString}
+	}
+	if ref, ok := paramMap["$ref"].(string); ok {
+		return c.convertRef(ref, paramMap, depth)
 	}
 
+	schema := &genai.Schema{
+		Enum: schemaStringSlice(paramMap["enum"]),
+	}
 	if desc, ok := paramMap["description"].(string); ok {
 		schema.Description = desc
 	}
-
-	typeVal, hasType := paramMap["type"]
-	if !hasType {
-		return schema
+	if title, ok := paramMap["title"].(string); ok {
+		schema.Title = title
+	}
+	if alternatives, ok := paramMap["anyOf"].([]any); ok {
+		for _, alternative := range alternatives {
+			if isNullSchema(alternative) {
+				schema.Nullable = genai.Ptr(true)
+				continue
+			}
+			if converted := c.convert(alternative, depth); converted != nil {
+				schema.AnyOf = append(schema.AnyOf, converted)
+			}
+		}
+		if len(schema.AnyOf) == 0 {
+			if schema.Nullable == nil {
+				return nil
+			}
+			// Only null was allowed; keep a nullable string.
+			schema.Type = genai.TypeString
+			return schema
+		}
+		if len(schema.AnyOf) == 1 {
+			return mergeSchemaInto(schema, schema.AnyOf[0])
+		}
 	}
 
-	typeStr, ok := typeVal.(string)
+	typeStr, ok := paramMap["type"].(string)
 	if !ok {
+		if len(schema.AnyOf) == 0 {
+			// Gemini needs a type; the conversion has always used string
+			// for schemas without one.
+			schema.Type = genai.TypeString
+		}
 		return schema
 	}
-
 	schema.Type = mapJSONTypeToGoogle(typeStr)
 
 	switch typeStr {
 	case "array":
-		schema.Items = processArrayItems(paramMap)
+		items, ok := paramMap["items"]
+		if !ok {
+			break
+		}
+		schema.Items = c.convert(items, depth)
+		if schema.Items == nil {
+			return nil
+		}
 	case "object":
-		if props, ok := paramMap["properties"].(map[string]any); ok {
-			schema.Properties = convertSchemaProperties(props)
+		props, ok := paramMap["properties"].(map[string]any)
+		if !ok {
+			break
+		}
+		schema.Properties = make(map[string]*genai.Schema, len(props))
+		for name, prop := range props {
+			if converted := c.convert(prop, depth); converted != nil {
+				schema.Properties[name] = converted
+			}
+		}
+		for _, name := range schemaStringSlice(paramMap["required"]) {
+			if _, ok := schema.Properties[name]; ok {
+				schema.Required = append(schema.Required, name)
+			}
 		}
 	}
-
 	return schema
 }
 
-func processArrayItems(paramMap map[string]any) *genai.Schema {
-	items, ok := paramMap["items"].(map[string]any)
+func (c *schemaConverter) convertRef(ref string, paramMap map[string]any, depth int) *genai.Schema {
+	if depth >= maxSchemaRefDepth {
+		return nil
+	}
+	if _, ok := c.resolving[ref]; ok {
+		return nil
+	}
+	target, ok := localSchemaRefTarget(c.root, ref)
 	if !ok {
 		return nil
 	}
+	c.resolving[ref] = struct{}{}
+	defer delete(c.resolving, ref)
 
-	return convertToSchema(items)
+	// Keywords next to "$ref" refine the referenced schema, e.g. a
+	// property-specific description.
+	if targetMap, ok := target.(map[string]any); ok && len(paramMap) > 1 {
+		merged := maps.Clone(targetMap)
+		for key, value := range paramMap {
+			if key != "$ref" {
+				merged[key] = value
+			}
+		}
+		target = merged
+	}
+	return c.convert(target, depth+1)
+}
+
+func isNullSchema(value any) bool {
+	valueMap, ok := value.(map[string]any)
+	return ok && len(valueMap) == 1 && valueMap["type"] == "null"
+}
+
+// mergeSchemaInto copies the single remaining anyOf alternative onto the
+// outer schema, keeping the outer description, title, and nullability.
+func mergeSchemaInto(outer, alternative *genai.Schema) *genai.Schema {
+	merged := *alternative
+	if outer.Description != "" {
+		merged.Description = outer.Description
+	}
+	if outer.Title != "" {
+		merged.Title = outer.Title
+	}
+	if outer.Nullable != nil {
+		merged.Nullable = outer.Nullable
+	}
+	if len(outer.Enum) > 0 && len(merged.Enum) == 0 {
+		merged.Enum = outer.Enum
+	}
+	return &merged
+}
+
+// localSchemaRefTarget resolves a same-document "$ref" such as
+// "#/$defs/Filter" or "#" against root. The fragment is a URI-encoded
+// JSON Pointer, so it is percent-decoded before splitting.
+func localSchemaRefTarget(root map[string]any, ref string) (any, bool) {
+	if !strings.HasPrefix(ref, "#") {
+		return nil, false
+	}
+	pointer, err := url.PathUnescape(strings.TrimPrefix(ref, "#"))
+	if err != nil {
+		return nil, false
+	}
+	if pointer == "" {
+		return root, true
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		// Anchor references ("#name") are not supported.
+		return nil, false
+	}
+	current := any(root)
+	for _, token := range strings.Split(pointer[1:], "/") {
+		token = strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+		switch typed := current.(type) {
+		case map[string]any:
+			next, ok := typed[token]
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(token)
+			if err != nil || index < 0 || index >= len(typed) {
+				return nil, false
+			}
+			current = typed[index]
+		default:
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func schemaStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if stringItem, ok := item.(string); ok {
+				result = append(result, stringItem)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func mapJSONTypeToGoogle(jsonType string) genai.Type {

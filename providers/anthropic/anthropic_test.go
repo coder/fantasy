@@ -3263,6 +3263,47 @@ func TestToTools_RawJSON(t *testing.T) {
 	require.Equal(t, "computer", cuToolJSON["name"])
 }
 
+func TestToTools_PreservesFunctionInputSchema(t *testing.T) {
+	t.Parallel()
+
+	lm := languageModel{options: options{}}
+	tools := []fantasy.Tool{
+		fantasy.FunctionTool{
+			Name: "schema_test",
+			InputSchema: map[string]any{
+				"type":        "object",
+				"description": "Tool input",
+				"$defs": map[string]any{
+					"value": map[string]any{"type": "string"},
+				},
+				"properties": map[string]any{
+					"x": map[string]any{"$ref": "#/$defs/value"},
+				},
+				"required":             []any{"x"},
+				"additionalProperties": false,
+			},
+		},
+	}
+
+	rawTools, _, warnings, _ := lm.toTools(tools, nil, false)
+	require.Empty(t, warnings)
+	require.Len(t, rawTools, 1)
+
+	var wireTool map[string]any
+	require.NoError(t, json.Unmarshal(rawTools[0], &wireTool))
+	inputSchema, ok := wireTool["input_schema"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "Tool input", inputSchema["description"])
+	require.Equal(t, false, inputSchema["additionalProperties"])
+	require.Equal(t, []any{"x"}, inputSchema["required"])
+	require.Equal(t, map[string]any{
+		"value": map[string]any{"type": "string"},
+	}, inputSchema["$defs"])
+	require.Equal(t, map[string]any{
+		"x": map[string]any{"$ref": "#/$defs/value"},
+	}, inputSchema["properties"])
+}
+
 func TestGenerate_BetaAPI(t *testing.T) {
 	t.Parallel()
 

@@ -976,15 +976,20 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 			if !ok {
 				continue
 			}
-			required := []string{}
 			var properties any
 			if props, ok := ft.InputSchema["properties"]; ok {
 				properties = props
 			}
-			if req, ok := ft.InputSchema["required"]; ok {
-				if reqArr, ok := req.([]string); ok {
-					required = reqArr
+			// ToolInputSchemaParam types only "properties" and "required".
+			// Forward every other keyword ($defs, additionalProperties,
+			// descriptions) so references in the schema keep resolving.
+			extraFields := make(map[string]any)
+			for key, value := range ft.InputSchema {
+				switch key {
+				case "type", "properties", "required":
+					continue
 				}
+				extraFields[key] = value
 			}
 			cacheControl := GetCacheControl(ft.ProviderOptions)
 
@@ -992,8 +997,9 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 				Name:        ft.Name,
 				Description: anthropic.String(ft.Description),
 				InputSchema: anthropic.ToolInputSchemaParam{
-					Properties: properties,
-					Required:   required,
+					Properties:  properties,
+					Required:    anyToStringSlice(ft.InputSchema["required"]),
+					ExtraFields: extraFields,
 				},
 			}
 			if cacheControl != nil {
