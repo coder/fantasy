@@ -708,6 +708,10 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 					meta, ok := toolResultPart.ProviderOptions[Name].(*WebSearchCallMetadata)
 					if !ok || meta == nil {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: fmt.Sprintf("dropping provider-executed tool result %q: it has no web search metadata", toolResultPart.ToolCallID),
+						})
 						continue
 					}
 					item, err := inlineWebSearchCallItem(meta)
@@ -753,14 +757,16 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					continue
 				}
 
-				// Provider-executed tool results (e.g. web search) are
-				// replayed from the assistant message; here their place
-				// among its items is lost.
+				// A tool message has lost the result's position among the
+				// assistant's items, so only the assistant branch can
+				// replay it.
 				if toolResultPart.ProviderExecuted {
-					warnings = append(warnings, fantasy.CallWarning{
-						Type:    fantasy.CallWarningTypeOther,
-						Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message", toolResultPart.ToolCallID),
-					})
+					if !replayedSearches[toolResultPart.ToolCallID] {
+						warnings = append(warnings, fantasy.CallWarning{
+							Type:    fantasy.CallWarningTypeOther,
+							Message: fmt.Sprintf("dropping provider-executed tool result %q from a tool message: it is replayed only from an assistant message", toolResultPart.ToolCallID),
+						})
+					}
 					continue
 				}
 

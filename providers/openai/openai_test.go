@@ -4703,7 +4703,10 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 
 		require.NoError(t, err)
 
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
+		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=false")
 		require.Nil(t, input[0].OfItemReference)
@@ -4717,7 +4720,10 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 
 		require.NoError(t, err)
 
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
+		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=true")
 		require.Nil(t, input[0].OfItemReference)
@@ -4924,7 +4930,10 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
 		require.NoError(t, err)
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping provider-executed tool result "ws_002": it has no web search metadata`,
+		}}, warnings)
 
 		// Reasoning without encrypted content is skipped under
 		// store=false, and so is the web_search_call, whose result has

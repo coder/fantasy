@@ -585,7 +585,7 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping provider-executed tool result "ws_01" from a tool message`,
+			Message: `dropping provider-executed tool result "ws_01" from a tool message: it is replayed only from an assistant message`,
 		}}, warnings)
 		require.Empty(t, input)
 	})
@@ -600,7 +600,7 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 		require.EqualError(t, err, `openai responses prompt has function_call without function_call_output for call_id "call_provider_result"`)
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping provider-executed tool result "call_provider_result" from a tool message`,
+			Message: `dropping provider-executed tool result "call_provider_result" from a tool message: it is replayed only from an assistant message`,
 		}}, warnings)
 	})
 }

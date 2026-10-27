@@ -554,6 +554,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		store        bool
 		content      []fantasy.MessagePart
 		laterContent []fantasy.MessagePart
+		toolContent  []fantasy.MessagePart
 		want         string
 		wantWarning  string
 	}{
@@ -635,6 +636,14 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:         `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
 		},
 		{
+			// A result also kept in a tool message was already replayed.
+			name:        "StoredResultAlsoInToolMessage",
+			store:       true,
+			content:     []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
+			toolContent: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
+			want:        `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
+		},
+		{
 			name:         "StoredCallInLaterMessage",
 			store:        true,
 			content:      []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
@@ -696,9 +705,10 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			wantWarning: `dropping web search "ws_01": metadata has no action`,
 		},
 		{
-			name:    "UnstoredWithoutMetadata",
-			content: append(webSearchCallParts("ws_01", nil), answer),
-			want:    `[` + userJSON + `,` + answerJSON + `]`,
+			name:        "UnstoredWithoutMetadata",
+			content:     append(webSearchCallParts("ws_01", nil), answer),
+			want:        `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning: `dropping provider-executed tool result "ws_01": it has no web search metadata`,
 		},
 		{
 			name: "UnstoredUnknownActionType",
@@ -724,6 +734,9 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			}
 			if tc.laterContent != nil {
 				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleAssistant, Content: tc.laterContent})
+			}
+			if tc.toolContent != nil {
+				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.toolContent})
 			}
 			warnings := requireResponsesInputJSON(t, prompt, tc.store, tc.want)
 			var messages []string
