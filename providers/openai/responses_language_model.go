@@ -615,8 +615,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 			startIdx := len(input)
 			// referenceAt is the index of the part that can reference a
 			// stored search: the part right after a reasoning part from a
-			// stored response. It counts parts, not input items, so a skipped
-			// part still separates a search from its reasoning.
+			// stored response. It counts parts, not input items, because a
+			// skipped part means the search did not directly follow its
+			// reasoning in the response.
 			referenceAt := -1
 			for i, c := range msg.Content {
 				switch c.GetType() {
