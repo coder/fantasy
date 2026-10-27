@@ -706,11 +706,11 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					if !ok || meta == nil {
 						continue
 					}
-					item, ok := unstoredWebSearchCallItem(meta)
-					if !ok {
+					item, err := unstoredWebSearchCallItem(meta)
+					if err != nil {
 						warnings = append(warnings, fantasy.CallWarning{
 							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("dropping web search %q: it has no replayable action", meta.ItemID),
+							Message: fmt.Sprintf("dropping web search %q: %v", meta.ItemID, err),
 						})
 						continue
 					}
@@ -930,15 +930,15 @@ func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 // or another credential carries real ids, and the API replaces the sent
 // action with the stored item of that id. Sources are left out because
 // the API ignores them on input.
-func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, bool) {
+func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {
-		return responses.ResponseInputItemUnionParam{}, false
+		return responses.ResponseInputItemUnionParam{}, errors.New("it has no action")
 	}
 	// The API rejects the whole request for any other action type.
 	switch meta.Action.Type {
 	case "search", "open_page", "find_in_page":
 	default:
-		return responses.ResponseInputItemUnionParam{}, false
+		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("action type %q cannot be replayed", meta.Action.Type)
 	}
 	action := *meta.Action
 	action.Sources = nil
@@ -947,7 +947,7 @@ func unstoredWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseI
 		Status string           `json:"status,omitempty"`
 		Action *WebSearchAction `json:"action"`
 	}{Type: "web_search_call", Status: meta.Status, Action: &action})
-	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, true
+	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, nil
 }
 
 func validateResponsesInput(input responses.ResponseInputParam) error {

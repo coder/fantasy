@@ -586,7 +586,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				answer,
 			),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
-			wantWarning: `dropping web search "ws_01": it has no replayable action`,
+			wantWarning: `dropping web search "ws_01": it has no action`,
 		},
 		{
 			name:    "UnstoredWithoutMetadata",
@@ -604,7 +604,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				answer,
 			),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
-			wantWarning: `dropping web search "ws_01": it has no replayable action`,
+			wantWarning: `dropping web search "ws_01": action type "find" cannot be replayed`,
 		},
 	}
 	for _, tc := range tests {
