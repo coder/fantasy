@@ -938,8 +938,8 @@ func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInp
 	default:
 		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("action type %q cannot be replayed", meta.Action.Type)
 	}
-	// Only fields the API takes are sent, so a field added to the stored
-	// metadata cannot break replay.
+	// Sources are ignored on input, and copying only these fields keeps
+	// a field added to the stored metadata from breaking replay.
 	type action struct {
 		Type    string   `json:"type"`
 		Queries []string `json:"queries,omitempty"`
