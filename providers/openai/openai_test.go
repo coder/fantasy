@@ -4713,7 +4713,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		require.Nil(t, input[1].OfItemReference)
 	})
 
-	t.Run("store true skips unreferenced search without metadata", func(t *testing.T) {
+	t.Run("store true skips search without metadata", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
@@ -4892,6 +4892,13 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 				fantasy.ToolResultPart{
 					ToolCallID:       webSearchItemID,
 					ProviderExecuted: true,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &WebSearchCallMetadata{
+							ItemID: webSearchItemID,
+							Status: "completed",
+							Action: &WebSearchAction{Type: "search", Query: "weather in San Francisco"},
+						},
+					},
 				},
 				fantasy.TextPart{Text: "Sunny."},
 			},
@@ -4904,7 +4911,7 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		},
 	}
 
-	t.Run("store true pairs reasoning and web search", func(t *testing.T) {
+	t.Run("store true references reasoning before the search", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system", true)
@@ -4912,67 +4919,33 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Order: user, item_reference(rs_*), item_reference(ws_*),
+		// Order: user, item_reference(rs_*), web_search_call,
 		// assistant text, user.
 		require.Len(t, input, 5)
 
 		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID,
-			"reasoning item_reference must precede web_search item_reference")
+		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
 
-		require.NotNil(t, input[2].OfItemReference)
-		require.Equal(t, webSearchItemID, input[2].OfItemReference.ID)
+		require.NotNil(t, input[2].OfWebSearchCall)
 	})
 
-	t.Run("store false skips both reasoning and provider tool call", func(t *testing.T) {
+	t.Run("store false replays the search without reasoning", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
 		require.NoError(t, err)
-		require.Equal(t, []fantasy.CallWarning{{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping web search "ws_002": it has no web search metadata`,
-		}}, warnings)
+		require.Empty(t, warnings)
 
 		// Reasoning without encrypted content is skipped under
-		// store=false, and so is the web_search_call, whose result has
-		// no metadata to send inline. user, assistant text, user.
-		require.Len(t, input, 3)
+		// store=false. user, web_search_call, assistant text, user.
+		require.Len(t, input, 4)
+		require.NotNil(t, input[1].OfWebSearchCall)
 		for _, item := range input {
 			require.Nil(t, item.OfItemReference)
 			require.Nil(t, item.OfReasoning)
 		}
 	})
-}
-
-func TestResponsesToPrompt_WebSearchRequiresReasoningReference(t *testing.T) {
-	t.Parallel()
-
-	input, warnings, err := toResponsesPrompt(fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ReasoningPart{
-					Text: "I should search.",
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ResponsesReasoningMetadata{Summary: []string{}},
-					},
-				},
-				fantasy.ToolCallPart{
-					ToolCallID:       "ws_missing_reasoning",
-					ToolName:         "web_search",
-					ProviderExecuted: true,
-				},
-				fantasy.TextPart{Text: "Search completed."},
-			},
-		},
-	}, "system", true)
-
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-	require.Len(t, input, 1)
-	require.NotNil(t, input[0].OfMessage)
 }
 
 func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
@@ -5583,6 +5556,7 @@ func TestComputerUseGenerateRoundTrip(t *testing.T) {
 		case "computer_call":
 			foundComputerCall = true
 			require.Equal(t, "call_01", itemMap["call_id"])
+			require.NotContains(t, itemMap, "id", "a replayed computer_call must not carry its item ID")
 		case "computer_call_output":
 			foundComputerCallOutput = true
 			require.Equal(t, toolCall.ToolCallID, itemMap["call_id"])

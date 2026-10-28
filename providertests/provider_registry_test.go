@@ -101,10 +101,9 @@ func TestProviderRegistry_Serialization_OpenAIResponsesReasoningMetadata(t *test
 				Text: "",
 				ProviderMetadata: fantasy.ProviderMetadata{
 					openai.Name: &openai.ResponsesReasoningMetadata{
-						ItemID:             "item-123",
-						Summary:            []string{"part1", "part2"},
-						Finalized:          true,
-						SourceStoreEnabled: true,
+						ItemID:    "item-123",
+						Summary:   []string{"part1", "part2"},
+						Finalized: true,
 					},
 				},
 			},
@@ -144,7 +143,6 @@ func TestProviderRegistry_Serialization_OpenAIResponsesReasoningMetadata(t *test
 	require.Equal(t, "item-123", meta.ItemID)
 	require.Equal(t, []string{"part1", "part2"}, meta.Summary)
 	require.True(t, meta.Finalized)
-	require.True(t, meta.SourceStoreEnabled)
 }
 
 func TestProviderRegistry_Serialization_AnthropicOptions(t *testing.T) {
