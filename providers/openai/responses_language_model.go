@@ -222,14 +222,13 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		allowPreviousResponseToolOutputs = true
 	}
 
-	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
 	var input responses.ResponseInputParam
 	var inputWarnings []fantasy.CallWarning
 	var err error
 	if allowPreviousResponseToolOutputs {
-		input, inputWarnings, err = toResponsesPromptWithValidation(call.Prompt, modelConfig.systemMessageMode, storeEnabled, true)
+		input, inputWarnings, err = toResponsesPromptWithValidation(call.Prompt, modelConfig.systemMessageMode, true)
 	} else {
-		input, inputWarnings, err = toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+		input, inputWarnings, err = toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode)
 	}
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
@@ -462,11 +461,11 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
-	return toResponsesPromptWithValidation(prompt, systemMessageMode, store, false)
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+	return toResponsesPromptWithValidation(prompt, systemMessageMode, false)
 }
 
-func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode string, store bool, allowUnpairedFunctionCallOutputs bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode string, allowUnpairedFunctionCallOutputs bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 

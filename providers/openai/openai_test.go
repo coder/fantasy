@@ -3819,7 +3819,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3847,7 +3847,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3886,7 +3886,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3909,7 +3909,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3933,7 +3933,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3966,7 +3966,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3999,7 +3999,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -4696,42 +4696,20 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	t.Run("store false skips search without metadata", func(t *testing.T) {
-		t.Parallel()
+	input, warnings, err := toResponsesPrompt(prompt, "system instructions")
 
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+	require.NoError(t, err)
 
-		require.NoError(t, err)
-
-		require.Equal(t, []fantasy.CallWarning{{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping web search "ws_01": it has no web search metadata`,
-		}}, warnings)
-		require.Len(t, input, 2,
-			"expected user + assistant text when store=false")
-		require.Nil(t, input[0].OfItemReference)
-		require.Nil(t, input[1].OfItemReference)
-	})
-
-	t.Run("store true skips search without metadata", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
-
-		require.NoError(t, err)
-
-		require.Equal(t, []fantasy.CallWarning{{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping web search "ws_01": it has no web search metadata`,
-		}}, warnings)
-		require.Len(t, input, 2,
-			"expected user + assistant text when store=true")
-		require.Nil(t, input[0].OfItemReference)
-		require.Nil(t, input[1].OfItemReference)
-	})
+	require.Equal(t, []fantasy.CallWarning{{
+		Type:    fantasy.CallWarningTypeOther,
+		Message: `dropping web search "ws_01": it has no web search metadata`,
+	}}, warnings)
+	require.Len(t, input, 2, "expected user + assistant text")
+	require.Nil(t, input[0].OfItemReference)
+	require.Nil(t, input[1].OfItemReference)
 }
 
-func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
+func TestResponsesToPrompt_ReasoningWithoutEncryptedContent(t *testing.T) {
 	t.Parallel()
 
 	encryptedContent := "gAAAAABpvAwtDPh5dSXW86hwbwoTo4DJHANQ"
@@ -4770,7 +4748,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		},
 	}
 
-	t.Run("store true skips reasoning when item id missing", func(t *testing.T) {
+	t.Run("skips reasoning when item id missing", func(t *testing.T) {
 		t.Parallel()
 
 		noIDPrompt := fantasy.Prompt{
@@ -4800,7 +4778,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(noIDPrompt, "system", true)
+		input, warnings, err := toResponsesPrompt(noIDPrompt, "system")
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
@@ -4814,23 +4792,20 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		}
 	})
 
-	t.Run("store false skips reasoning", func(t *testing.T) {
+	t.Run("skips unfinalized reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Unfinalized metadata is skipped with store=false: user,
-		// assistant text, follow-up user.
+		// user, assistant text, follow-up user.
 		require.Len(t, input, 3)
 
 		for _, item := range input {
-			require.Nil(t, item.OfReasoning,
-				"reasoning items must not appear when store=false")
-			require.Nil(t, item.OfItemReference,
-				"reasoning item_reference must not appear when store=false")
+			require.Nil(t, item.OfReasoning)
+			require.Nil(t, item.OfItemReference)
 		}
 	})
 }
@@ -4887,40 +4862,19 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		},
 	}
 
-	t.Run("store true skips reasoning before the search", func(t *testing.T) {
-		t.Parallel()
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
 
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Order: user, web_search_call, assistant text, user.
-		require.Len(t, input, 4)
-		require.NotNil(t, input[1].OfWebSearchCall)
-		for _, item := range input {
-			require.Nil(t, item.OfItemReference)
-			require.Nil(t, item.OfReasoning)
-		}
-	})
-
-	t.Run("store false replays the search without reasoning", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
-
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Reasoning without encrypted content is skipped under
-		// store=false. user, web_search_call, assistant text, user.
-		require.Len(t, input, 4)
-		require.NotNil(t, input[1].OfWebSearchCall)
-		for _, item := range input {
-			require.Nil(t, item.OfItemReference)
-			require.Nil(t, item.OfReasoning)
-		}
-	})
+	// Reasoning without encrypted content is skipped. Order: user,
+	// web_search_call, assistant text, user.
+	require.Len(t, input, 4)
+	require.NotNil(t, input[1].OfWebSearchCall)
+	for _, item := range input {
+		require.Nil(t, item.OfItemReference)
+		require.Nil(t, item.OfReasoning)
+	}
 }
 
 func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
@@ -4972,7 +4926,7 @@ func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", true)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 
 	require.NoError(t, err)
 	require.Empty(t, warnings)
@@ -5582,7 +5536,7 @@ func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 
 	// Should warn about non-image result.

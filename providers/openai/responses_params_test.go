@@ -580,7 +580,7 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 
 		input, warnings, err := toResponsesPrompt(fantasy.Prompt{
 			testResponsesProviderToolResultMessage("ws_01"),
-		}, "system", false)
+		}, "system")
 		require.NoError(t, err)
 		require.Equal(t, []fantasy.CallWarning{{
 			Type:    fantasy.CallWarningTypeOther,
