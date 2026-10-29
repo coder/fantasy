@@ -150,8 +150,9 @@ type ResponsesReasoningMetadata struct {
 	EncryptedContent *string  `json:"encrypted_content"`
 	Summary          []string `json:"summary"`
 	// Finalized marks metadata copied from the completed reasoning output
-	// item. Only finalized encrypted content is replayed inline; streaming
-	// placeholders and metadata persisted before this field existed are not.
+	// item. Only finalized metadata with encrypted content is replayed;
+	// other reasoning, such as streaming placeholders and metadata persisted
+	// before this field existed, is skipped.
 	Finalized bool `json:"finalized,omitempty"`
 }
 
