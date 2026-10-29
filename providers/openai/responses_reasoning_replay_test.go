@@ -109,8 +109,6 @@ func TestResponsesGenerate_ReasoningMetadataIsFinalized(t *testing.T) {
 func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 	t.Parallel()
 
-	// The SDK marshals item references without a type field.
-	reference := map[string]any{"id": "rs_1"}
 	fullItem := func(summary ...any) map[string]any {
 		return map[string]any{
 			"type":              "reasoning",
@@ -126,6 +124,9 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		encrypted *string
 		summary   []string
 		webSearch bool
+		// unfinalized clears Finalized, as in streaming placeholders and
+		// metadata saved before Finalized existed.
+		unfinalized bool
 		// want is the reasoning input item; nil means none is sent.
 		want map[string]any
 	}{
@@ -154,10 +155,15 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		{
 			name:  "no blob store true",
 			store: true,
-			want:  reference,
 		},
 		{
 			name: "no blob store false",
+		},
+		{
+			name:        "unfinalized store true",
+			store:       true,
+			encrypted:   new("enc-final"),
+			unfinalized: true,
 		},
 		{
 			name:      "store true before web search",
@@ -185,7 +191,7 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 						ItemID:           "rs_1",
 						EncryptedContent: tc.encrypted,
 						Summary:          tc.summary,
-						Finalized:        true,
+						Finalized:        !tc.unfinalized,
 					}}},
 					next,
 					fantasy.TextPart{Text: "a"},

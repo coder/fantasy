@@ -123,24 +123,18 @@ func TestResponsesToPrompt_ReplaysTextPhase(t *testing.T) {
 		},
 	}
 
-	for _, store := range []bool{true, false} {
-		t.Run(fmt.Sprintf("store %t", store), func(t *testing.T) {
-			t.Parallel()
+	input, warnings, err := toResponsesPrompt(prompt, "system")
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	require.Len(t, input, 5)
 
-			input, warnings, err := toResponsesPrompt(prompt, "system", store)
-			require.NoError(t, err)
-			require.Empty(t, warnings)
-			require.Len(t, input, 5)
-
-			var phases []any
-			for _, item := range input[1:] {
-				raw, err := json.Marshal(item)
-				require.NoError(t, err)
-				var fields map[string]any
-				require.NoError(t, json.Unmarshal(raw, &fields))
-				phases = append(phases, fields["phase"])
-			}
-			require.Equal(t, []any{"commentary", "final_answer", nil, nil}, phases)
-		})
+	var phases []any
+	for _, item := range input[1:] {
+		raw, err := json.Marshal(item)
+		require.NoError(t, err)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(raw, &fields))
+		phases = append(phases, fields["phase"])
 	}
+	require.Equal(t, []any{"commentary", "final_answer", nil, nil}, phases)
 }

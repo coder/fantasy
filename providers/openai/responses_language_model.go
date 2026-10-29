@@ -222,14 +222,13 @@ func (o responsesLanguageModel) prepareParams(call fantasy.Call) (*responses.Res
 		allowPreviousResponseToolOutputs = true
 	}
 
-	storeEnabled := openaiOptions != nil && openaiOptions.Store != nil && *openaiOptions.Store
 	var input responses.ResponseInputParam
 	var inputWarnings []fantasy.CallWarning
 	var err error
 	if allowPreviousResponseToolOutputs {
-		input, inputWarnings, err = toResponsesPromptWithValidation(call.Prompt, modelConfig.systemMessageMode, storeEnabled, true)
+		input, inputWarnings, err = toResponsesPromptWithValidation(call.Prompt, modelConfig.systemMessageMode, true)
 	} else {
-		input, inputWarnings, err = toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode, storeEnabled)
+		input, inputWarnings, err = toResponsesPrompt(call.Prompt, modelConfig.systemMessageMode)
 	}
 	warnings = append(warnings, inputWarnings...)
 	if err != nil {
@@ -462,11 +461,11 @@ func responsesUsage(resp responses.Response) fantasy.Usage {
 	return usage
 }
 
-func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, store bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
-	return toResponsesPromptWithValidation(prompt, systemMessageMode, store, false)
+func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+	return toResponsesPromptWithValidation(prompt, systemMessageMode, false)
 }
 
-func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode string, store bool, allowUnpairedFunctionCallOutputs bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
+func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode string, allowUnpairedFunctionCallOutputs bool) (responses.ResponseInputParam, []fantasy.CallWarning, error) {
 	var input responses.ResponseInputParam
 	var warnings []fantasy.CallWarning
 
@@ -682,13 +681,11 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 					if item, ok := responsesReasoningInputItem(meta); ok {
 						input = append(input, item)
-					} else if store {
-						input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
-					} else {
-						// Unstored reasoning without finalized encrypted
-						// content cannot be resolved by the API.
-						continue
 					}
+					// Reasoning that cannot be sent inline is skipped, not
+					// referenced: a reference to an item OpenAI does not hold,
+					// such as one from an unstored response, fails the whole
+					// request.
 					continue
 				case fantasy.ContentTypeToolResult:
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
@@ -1120,7 +1117,7 @@ func hasVisibleResponsesUserContent(content responses.ResponseInputMessageConten
 func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnionParam, startIdx int) bool {
 	// Check if we added any assistant content parts from this message
 	for i := startIdx; i < len(items); i++ {
-		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil || items[i].OfWebSearchCall != nil {
+		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil || items[i].OfWebSearchCall != nil {
 			return true
 		}
 	}

@@ -3819,13 +3819,42 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
 		require.Len(t, input, 1, "should only have user message")
 		require.Len(t, warnings, 1)
 		require.Equal(t, fantasy.CallWarningTypeOther, warnings[0].Type)
+		require.Contains(t, warnings[0].Message, "dropping empty assistant message")
+	})
+
+	t.Run("should drop assistant messages with only reasoning that cannot be sent", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "Hello"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{ProviderOptions: fantasy.ProviderOptions{
+						Name: &ResponsesReasoningMetadata{ItemID: "rs_1"},
+					}},
+				},
+			},
+		}
+
+		input, warnings, err := toResponsesPrompt(prompt, "system")
+
+		require.NoError(t, err)
+
+		require.Len(t, input, 1, "should only have user message")
+		require.Len(t, warnings, 1)
 		require.Contains(t, warnings[0].Message, "dropping empty assistant message")
 	})
 
@@ -3847,7 +3876,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3886,7 +3915,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3909,7 +3938,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3933,7 +3962,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3966,7 +3995,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -3999,7 +4028,7 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 
@@ -4696,42 +4725,20 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	t.Run("store false skips search without metadata", func(t *testing.T) {
-		t.Parallel()
+	input, warnings, err := toResponsesPrompt(prompt, "system instructions")
 
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
+	require.NoError(t, err)
 
-		require.NoError(t, err)
-
-		require.Equal(t, []fantasy.CallWarning{{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping web search "ws_01": it has no web search metadata`,
-		}}, warnings)
-		require.Len(t, input, 2,
-			"expected user + assistant text when store=false")
-		require.Nil(t, input[0].OfItemReference)
-		require.Nil(t, input[1].OfItemReference)
-	})
-
-	t.Run("store true skips search without metadata", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
-
-		require.NoError(t, err)
-
-		require.Equal(t, []fantasy.CallWarning{{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: `dropping web search "ws_01": it has no web search metadata`,
-		}}, warnings)
-		require.Len(t, input, 2,
-			"expected user + assistant text when store=true")
-		require.Nil(t, input[0].OfItemReference)
-		require.Nil(t, input[1].OfItemReference)
-	})
+	require.Equal(t, []fantasy.CallWarning{{
+		Type:    fantasy.CallWarningTypeOther,
+		Message: `dropping web search "ws_01": it has no web search metadata`,
+	}}, warnings)
+	require.Len(t, input, 2, "expected user + assistant text")
+	require.Nil(t, input[0].OfItemReference)
+	require.Nil(t, input[1].OfItemReference)
 }
 
-func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
+func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 	t.Parallel()
 
 	encryptedContent := "gAAAAABpvAwtDPh5dSXW86hwbwoTo4DJHANQ"
@@ -4770,31 +4777,7 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		},
 	}
 
-	t.Run("store true emits item_reference for reasoning", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
-
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Unfinalized metadata (stream placeholders or rows persisted
-		// before Finalized existed) falls back to an item_reference with
-		// store=true. Order: user, item_reference(rs_*), assistant text,
-		// user.
-		require.Len(t, input, 4)
-
-		for _, item := range input {
-			require.Nil(t, item.OfReasoning,
-				"unfinalized reasoning must not be replayed inline")
-		}
-
-		require.NotNil(t, input[1].OfItemReference,
-			"expected reasoning replayed via item_reference")
-		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
-	})
-
-	t.Run("store true skips reasoning when item id missing", func(t *testing.T) {
+	t.Run("skips reasoning when item id missing", func(t *testing.T) {
 		t.Parallel()
 
 		noIDPrompt := fantasy.Prompt{
@@ -4810,7 +4793,11 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 					fantasy.ReasoningPart{
 						Text: "thinking",
 						ProviderOptions: fantasy.ProviderOptions{
-							Name: &ResponsesReasoningMetadata{Summary: []string{}},
+							Name: &ResponsesReasoningMetadata{
+								EncryptedContent: &encryptedContent,
+								Summary:          []string{},
+								Finalized:        true,
+							},
 						},
 					},
 					fantasy.TextPart{Text: "4"},
@@ -4824,13 +4811,12 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 			},
 		}
 
-		input, warnings, err := toResponsesPrompt(noIDPrompt, "system", true)
+		input, warnings, err := toResponsesPrompt(noIDPrompt, "system")
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Without an ItemID we cannot reference the reasoning
-		// item. Order: user, assistant text, user.
+		// user, assistant text, user.
 		require.Len(t, input, 3)
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning)
@@ -4838,183 +4824,22 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		}
 	})
 
-	t.Run("store false skips reasoning", func(t *testing.T) {
+	t.Run("skips unfinalized reasoning", func(t *testing.T) {
 		t.Parallel()
 
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
+		input, warnings, err := toResponsesPrompt(prompt, "system")
 
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Unfinalized metadata is skipped with store=false: user,
-		// assistant text, follow-up user.
+		// user, assistant text, follow-up user.
 		require.Len(t, input, 3)
 
 		for _, item := range input {
-			require.Nil(t, item.OfReasoning,
-				"reasoning items must not appear when store=false")
-			require.Nil(t, item.OfItemReference,
-				"reasoning item_reference must not appear when store=false")
-		}
-	})
-}
-
-func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
-	t.Parallel()
-
-	reasoningItemID := "rs_002"
-	webSearchItemID := "ws_002"
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "What is the weather in San Francisco?"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ReasoningPart{
-					Text: "I should look this up.",
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ResponsesReasoningMetadata{
-							ItemID:  reasoningItemID,
-							Summary: []string{},
-						},
-					},
-				},
-				fantasy.ToolCallPart{
-					ToolCallID:       webSearchItemID,
-					ToolName:         "web_search",
-					ProviderExecuted: true,
-				},
-				fantasy.ToolResultPart{
-					ToolCallID:       webSearchItemID,
-					ProviderExecuted: true,
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &WebSearchCallMetadata{
-							ItemID: webSearchItemID,
-							Status: "completed",
-							Action: &WebSearchAction{Type: "search", Query: "weather in San Francisco"},
-						},
-					},
-				},
-				fantasy.TextPart{Text: "Sunny."},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "And Tokyo?"},
-			},
-		},
-	}
-
-	t.Run("store true references reasoning before the search", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
-
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Order: user, item_reference(rs_*), web_search_call,
-		// assistant text, user.
-		require.Len(t, input, 5)
-
-		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
-
-		require.NotNil(t, input[2].OfWebSearchCall)
-	})
-
-	t.Run("store false replays the search without reasoning", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system", false)
-
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Reasoning without encrypted content is skipped under
-		// store=false. user, web_search_call, assistant text, user.
-		require.Len(t, input, 4)
-		require.NotNil(t, input[1].OfWebSearchCall)
-		for _, item := range input {
-			require.Nil(t, item.OfItemReference)
 			require.Nil(t, item.OfReasoning)
+			require.Nil(t, item.OfItemReference)
 		}
 	})
-}
-
-func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
-	t.Parallel()
-
-	reasoningItemID := "rs_003"
-	functionCallID := "call_003"
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "compute 1+1"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ReasoningPart{
-					Text: "I'll call add.",
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ResponsesReasoningMetadata{
-							ItemID:  reasoningItemID,
-							Summary: []string{},
-						},
-					},
-				},
-				fantasy.ToolCallPart{
-					ToolCallID: functionCallID,
-					ToolName:   "add",
-					Input:      `{"a":1,"b":1}`,
-				},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleTool,
-			Content: []fantasy.MessagePart{
-				fantasy.ToolResultPart{
-					ToolCallID: functionCallID,
-					Output:     fantasy.ToolResultOutputContentText{Text: "2"},
-				},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "thanks"},
-			},
-		},
-	}
-
-	input, warnings, err := toResponsesPrompt(prompt, "system", true)
-
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-
-	// Order: user, item_reference(rs_003), function_call(call_003),
-	// function_call_output(call_003), user.
-	require.Len(t, input, 5)
-
-	require.NotNil(t, input[1].OfItemReference)
-	require.Equal(t, reasoningItemID, input[1].OfItemReference.ID,
-		"reasoning item_reference must precede function_call")
-
-	require.NotNil(t, input[2].OfFunctionCall)
-	require.Equal(t, functionCallID, input[2].OfFunctionCall.CallID)
-
-	require.NotNil(t, input[3].OfFunctionCallOutput)
-	require.Equal(t, functionCallID, input[3].OfFunctionCallOutput.CallID)
 }
 
 func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
@@ -5611,7 +5436,7 @@ func TestComputerUseGenerateRoundTrip_NonImageResult(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 
 	// Should warn about non-image result.
