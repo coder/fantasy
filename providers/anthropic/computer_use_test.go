@@ -86,6 +86,15 @@ func TestParseComputerUseInput(t *testing.T) {
 		require.Equal(t, "ctrl+c", input.Text)
 	})
 
+	t.Run("key with repeat", func(t *testing.T) {
+		t.Parallel()
+		input, err := ParseComputerUseInput(`{"action":"key","text":"Tab","repeat":4}`)
+		require.NoError(t, err)
+		require.Equal(t, ActionKey, input.Action)
+		require.Equal(t, "Tab", input.Text)
+		require.Equal(t, int64(4), input.Repeat)
+	})
+
 	t.Run("scroll with coordinate direction and amount", func(t *testing.T) {
 		t.Parallel()
 		input, err := ParseComputerUseInput(`{"action":"scroll","coordinate":[960,540],"scroll_direction":"down","scroll_amount":3}`)

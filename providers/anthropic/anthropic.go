@@ -563,6 +563,9 @@ func (a languageModel) prepareParams(call fantasy.Call) (
 		sendReasoning = *providerOptions.SendReasoning
 	}
 	systemBlocks, messages, warnings := toPrompt(call.Prompt, sendReasoning)
+	if declaresComputerToolset(call.Tools) {
+		warnings = append(warnings, replayComputerToolsetCalls(messages)...)
+	}
 
 	if call.FrequencyPenalty != nil {
 		warnings = append(warnings, fantasy.CallWarning{
@@ -1081,7 +1084,9 @@ func (a languageModel) toTools(tools []fantasy.Tool, toolChoice *fantasy.ToolCho
 						})
 						continue
 					}
-					betaFlags = append(betaFlags, flag)
+					if flag != "" {
+						betaFlags = append(betaFlags, flag)
+					}
 				}
 				rawTools = append(rawTools, raw)
 				continue
@@ -1657,10 +1662,15 @@ func (a languageModel) Generate(ctx context.Context, call fantasy.Call) (*fantas
 			if !ok {
 				continue
 			}
+			toolName, input := toolUse.Name, string(toolUse.Input)
+			if isComputerToolsetMember(toolUse) {
+				toolName = computerUseAPIName
+				input = computerToolsetCallInput(toolUse.Name, input)
+			}
 			content = append(content, fantasy.ToolCallContent{
 				ToolCallID:       toolUse.ID,
-				ToolName:         toolUse.Name,
-				Input:            string(toolUse.Input),
+				ToolName:         toolName,
+				Input:            input,
 				ProviderExecuted: false,
 			})
 		case "server_tool_use":
@@ -1786,12 +1796,19 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 				}
 			case "content_block_start":
 				contentBlockType := chunk.ContentBlock.Type
+				toolName := chunk.ContentBlock.Name
 				if contentBlockType == "tool_use" || contentBlockType == "server_tool_use" {
-					openToolBlocks[chunk.Index] = &openToolBlock{
+					open := &openToolBlock{
 						id:               chunk.ContentBlock.ID,
-						name:             chunk.ContentBlock.Name,
+						name:             toolName,
 						providerExecuted: contentBlockType == "server_tool_use",
 					}
+					if contentBlockType == "tool_use" && isComputerToolsetMember(chunk.ContentBlock.AsToolUse()) {
+						open.toolsetMember = toolName
+						open.name = computerUseAPIName
+						toolName = computerUseAPIName
+					}
+					openToolBlocks[chunk.Index] = open
 				}
 				switch contentBlockType {
 				case "text":
@@ -1820,7 +1837,7 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 					if !yield(fantasy.StreamPart{
 						Type:          fantasy.StreamPartTypeToolInputStart,
 						ID:            chunk.ContentBlock.ID,
-						ToolCallName:  chunk.ContentBlock.Name,
+						ToolCallName:  toolName,
 						ToolCallInput: "",
 					}) {
 						return
@@ -1969,6 +1986,11 @@ func (a languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.S
 						continue
 					}
 					open.input.WriteString(chunk.Delta.PartialJSON)
+					if open.toolsetMember != "" {
+						// The member input lacks the action field, so it
+						// is sent once, merged, when the block closes.
+						continue
+					}
 					if !yield(fantasy.StreamPart{
 						Type:          fantasy.StreamPartTypeToolInputDelta,
 						ID:            open.id,
@@ -2066,12 +2088,26 @@ type openToolBlock struct {
 	id               string
 	name             string
 	providerExecuted bool
-	input            strings.Builder
+	// toolsetMember is the member name of a computer use toolset call,
+	// which is reported as the computer tool with an action input.
+	toolsetMember string
+	input         strings.Builder
 }
 
 // close emits the end-of-input and tool call parts for the block. It reports
 // whether the consumer wants more parts.
 func (o *openToolBlock) close(acc anthropic.Message, index int64, yield func(fantasy.StreamPart) bool) bool {
+	arguments := o.arguments(acc, index)
+	if o.toolsetMember != "" {
+		arguments = computerToolsetCallInput(o.toolsetMember, arguments)
+		if !yield(fantasy.StreamPart{
+			Type:          fantasy.StreamPartTypeToolInputDelta,
+			ID:            o.id,
+			ToolCallInput: arguments,
+		}) {
+			return false
+		}
+	}
 	if !yield(fantasy.StreamPart{
 		Type:             fantasy.StreamPartTypeToolInputEnd,
 		ID:               o.id,
@@ -2083,7 +2119,7 @@ func (o *openToolBlock) close(acc anthropic.Message, index int64, yield func(fan
 		Type:             fantasy.StreamPartTypeToolCall,
 		ID:               o.id,
 		ToolCallName:     o.name,
-		ToolCallInput:    o.arguments(acc, index),
+		ToolCallInput:    arguments,
 		ProviderExecuted: o.providerExecuted,
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"charm.land/fantasy"
 	anthropicsdk "github.com/charmbracelet/anthropic-sdk-go"
@@ -25,6 +26,13 @@ const computerUseAPIName = "computer"
 type ComputerUseToolVersion string
 
 const (
+	// ComputerUseToolset20260801 selects the August 2026 computer use
+	// toolset, the generally available version. It needs no beta
+	// header. On the wire each action is a member tool (screenshot,
+	// left_click, ...) tagged with toolset_name "computer"; this
+	// package maps those calls to and from the "computer" tool with an
+	// "action" input field, so callers handle every version alike.
+	ComputerUseToolset20260801 ComputerUseToolVersion = "computer_toolset_20260801"
 	// ComputerUse20251124 selects the November 2025 version of the
 	// computer use tool.
 	ComputerUse20251124 ComputerUseToolVersion = "computer_20251124"
@@ -36,14 +44,20 @@ const (
 // ComputerUseToolOptions holds the configuration for creating a
 // computer use tool instance.
 type ComputerUseToolOptions struct {
-	// DisplayWidthPx is the width of the display in pixels.
+	// DisplayWidthPx is the width of the display in pixels. The
+	// ComputerUseToolset20260801 version does not send it: toolset
+	// coordinates are in the pixel space of the returned screenshots.
 	DisplayWidthPx int64
-	// DisplayHeightPx is the height of the display in pixels.
+	// DisplayHeightPx is the height of the display in pixels. The
+	// ComputerUseToolset20260801 version does not send it.
 	DisplayHeightPx int64
-	// DisplayNumber is an optional X11 display number.
+	// DisplayNumber is an optional X11 display number. The
+	// ComputerUseToolset20260801 version does not send it.
 	DisplayNumber *int64
-	// EnableZoom enables zoom support. Only used with the
-	// ComputerUse20251124 version.
+	// EnableZoom controls zoom support. ComputerUse20251124 sends it
+	// as enable_zoom (off when nil). ComputerUseToolset20260801 sends
+	// it as configs.zoom.enabled (on when nil). ComputerUse20250124
+	// ignores it.
 	EnableZoom *bool
 	// ToolVersion selects which computer use tool version to use.
 	ToolVersion ComputerUseToolVersion
@@ -106,10 +120,43 @@ func getComputerUseVersion(tool fantasy.ProviderDefinedTool) (ComputerUseToolVer
 	return ComputerUseToolVersion(s), true
 }
 
+// ComputerUseToolVersionForModel returns the computer use tool
+// version that the Claude API accepts for modelID. Claude 4.8 and
+// later get the toolset, which Claude 5.5 and later accept
+// exclusively. Opus 4.5 through 4.7 and Sonnet 4.6 get
+// ComputerUse20251124. Sonnet 4.5, Haiku 4.5, and older models get
+// ComputerUse20250124. IDs without a recognizable Claude version
+// (for example claude-mythos-preview or a custom alias) get the
+// toolset, because the newest models accept only it.
+//
+// The mapping is for the Claude API. Amazon Bedrock and some other
+// platforms do not offer the toolset.
+func ComputerUseToolVersionForModel(modelID string) ComputerUseToolVersion {
+	major, minor, ok := claudeVersion(modelID)
+	if !ok {
+		return ComputerUseToolset20260801
+	}
+	switch {
+	case major > 4 || (major == 4 && minor >= 8):
+		return ComputerUseToolset20260801
+	case major == 4 && minor >= 5:
+		model := strings.ToLower(modelID)
+		if minor == 5 && (strings.Contains(model, "sonnet") || strings.Contains(model, "haiku")) {
+			return ComputerUse20250124
+		}
+		return ComputerUse20251124
+	default:
+		return ComputerUse20250124
+	}
+}
+
 // computerUseBetaFlag returns the Anthropic beta header value for
-// the given computer use tool version.
+// the given computer use tool version. The toolset is generally
+// available and returns an empty flag.
 func computerUseBetaFlag(version ComputerUseToolVersion) (string, error) {
 	switch version {
+	case ComputerUseToolset20260801:
+		return "", nil
 	case ComputerUse20251124:
 		// TODO: Replace with SDK constant when available.
 		return "computer-use-2025-11-24", nil
@@ -129,6 +176,9 @@ func computerUseToolJSON(pdt fantasy.ProviderDefinedTool) (json.RawMessage, erro
 	version, ok := getComputerUseVersion(pdt)
 	if !ok {
 		return nil, fmt.Errorf("computerUseToolJSON: tool_version arg is missing")
+	}
+	if version == ComputerUseToolset20260801 {
+		return computerToolsetJSON(pdt)
 	}
 
 	h, hOK := anyToInt64(pdt.Args["display_height_px"])
@@ -177,6 +227,44 @@ func computerUseToolJSON(pdt fantasy.ProviderDefinedTool) (json.RawMessage, erro
 			"unsupported computer use tool version: %q", version,
 		)
 	}
+}
+
+// computerToolsetMemberConfig is the per-member entry of a toolset's
+// configs object.
+type computerToolsetMemberConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+// computerToolsetCacheControl is the toolset entry's cache_control
+// breakpoint.
+type computerToolsetCacheControl struct {
+	Type string `json:"type"`
+}
+
+// computerToolsetParam is the tools entry for the computer use
+// toolset. The API rejects name, display_width_px,
+// display_height_px, display_number, and enable_zoom on it.
+type computerToolsetParam struct {
+	Type         string                                 `json:"type"`
+	Configs      map[string]computerToolsetMemberConfig `json:"configs,omitempty"`
+	CacheControl *computerToolsetCacheControl           `json:"cache_control,omitempty"`
+}
+
+func computerToolsetJSON(pdt fantasy.ProviderDefinedTool) (json.RawMessage, error) {
+	tool := computerToolsetParam{Type: string(ComputerUseToolset20260801)}
+	if v, ok := pdt.Args["enable_zoom"]; ok {
+		enabled, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("computer use tool has invalid enable_zoom")
+		}
+		tool.Configs = map[string]computerToolsetMemberConfig{
+			string(ActionZoom): {Enabled: enabled},
+		}
+	}
+	if _, ok := pdt.Args["cache_control"]; ok {
+		tool.CacheControl = &computerToolsetCacheControl{Type: "ephemeral"}
+	}
+	return json.Marshal(tool)
 }
 
 // ComputerAction identifies the action Claude wants to perform.
@@ -232,6 +320,8 @@ const (
 	// ActionKey presses a key combination.
 	//
 	//   - Text: key combo string (e.g. "ctrl+c", "Return").
+	//   - Repeat: optional press count from 1 to 100
+	//     (ComputerUseToolset20260801 only); absent means once.
 	ActionKey ComputerAction = "key"
 	// ActionScroll scrolls the screen (v20250124+).
 	//
@@ -261,8 +351,9 @@ const (
 	// No additional fields are populated.
 	ActionWait ComputerAction = "wait"
 	// ActionZoom views a specific screen region at full
-	// resolution (v20251124 only). Requires enable_zoom in the
-	// tool definition.
+	// resolution (v20251124 and the toolset). v20251124 needs
+	// EnableZoom set to true; the toolset offers zoom unless
+	// EnableZoom is set to false.
 	//
 	//   - Region: [x1, y1, x2, y2] top-left and bottom-right.
 	//
@@ -293,8 +384,12 @@ type ComputerUseInput struct {
 	// Duration is how long to hold the key in seconds
 	// (ActionHoldKey).
 	Duration int64 `json:"duration,omitempty"`
+	// Repeat is how many times to press the key combination
+	// (ActionKey, ComputerUseToolset20260801 only). Zero means the
+	// field was absent; press once.
+	Repeat int64 `json:"repeat,omitempty"`
 	// Region is [x1, y1, x2, y2] defining the zoom area
-	// (ActionZoom, v20251124 only).
+	// (ActionZoom, v20251124 and the toolset).
 	Region [4]int64 `json:"region,omitempty"`
 }
 
