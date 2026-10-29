@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/require"
 )
 
@@ -602,40 +601,6 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 			Type:    fantasy.CallWarningTypeOther,
 			Message: `dropping web search "call_provider_result": it has no web search metadata`,
 		}}, warnings)
-	})
-}
-
-func TestValidateResponsesInput_WebSearchReferenceRequiresReasoning(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid reasoning and web search references", func(t *testing.T) {
-		t.Parallel()
-
-		err := validateResponsesInput(responses.ResponseInputParam{
-			responses.ResponseInputItemParamOfItemReference("rs_valid"),
-			responses.ResponseInputItemParamOfItemReference("ws_valid"),
-		})
-		require.NoError(t, err)
-	})
-
-	t.Run("web search reference without reasoning", func(t *testing.T) {
-		t.Parallel()
-
-		err := validateResponsesInput(responses.ResponseInputParam{
-			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
-		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
-	})
-
-	t.Run("web search reference after non-reference item", func(t *testing.T) {
-		t.Parallel()
-
-		err := validateResponsesInput(responses.ResponseInputParam{
-			responses.ResponseInputItemParamOfItemReference("rs_valid"),
-			responses.ResponseInputItemParamOfMessage("text", responses.EasyInputMessageRoleAssistant),
-			responses.ResponseInputItemParamOfItemReference("ws_orphan"),
-		})
-		require.EqualError(t, err, `openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id "ws_orphan"`)
 	})
 }
 

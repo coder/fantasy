@@ -491,8 +491,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
-	// A search's call and result parts can each replay it, possibly from
-	// different messages; only the first one does.
+	// A search's result part can appear more than once, possibly in
+	// different messages; only the first one replays it.
 	replayedSearches := make(map[string]bool)
 	var dropped droppedSearches
 	for _, msg := range prompt {
@@ -613,14 +613,12 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 			input = append(input, responses.ResponseInputItemParamOfMessage(contentParts, responses.EasyInputMessageRoleUser))
 
 		case fantasy.MessageRoleAssistant:
+			// Replayed output items other than reasoning carry no item ID.
+			// The API pairs an item that has a stored ID with the reasoning
+			// item right before it, and rejects the request if that
+			// reasoning is missing. It never pairs an item without an ID.
 			startIdx := len(input)
-			// referenceAt is the index of the part that can reference a
-			// stored search: the part right after a reasoning part from a
-			// stored response. It counts parts, not input items, because a
-			// skipped part means the search did not directly follow its
-			// reasoning in the response.
-			referenceAt := -1
-			for i, c := range msg.Content {
+			for _, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
 					textPart, ok := fantasy.AsContentType[fantasy.TextPart](c)
@@ -649,21 +647,15 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 
+					// A provider-executed call is replayed from its result.
 					if toolCallPart.ProviderExecuted {
-						if store && referenceAt == i &&
-							isResponsesWebSearchToolCall(toolCallPart) &&
-							toolCallPart.ToolCallID != "" &&
-							!replayedSearches[toolCallPart.ToolCallID] {
-							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
-							replayedSearches[toolCallPart.ToolCallID] = true
-						}
 						continue
 					}
 
 					// Computer calls are round-tripped via param.Override
 					// using the raw wire-format JSON from the original response.
 					if rawJSON, ok := computerCallRawJSON[toolCallPart.ToolCallID]; ok {
-						overridden := param.Override[responses.ResponseComputerToolCallParam](json.RawMessage(rawJSON))
+						overridden := param.Override[responses.ResponseComputerToolCallParam](dropItemID(rawJSON))
 						input = append(input, responses.ResponseInputItemUnionParam{
 							OfComputerCall: &overridden,
 						})
@@ -696,10 +688,6 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						// Unstored reasoning without finalized encrypted
 						// content cannot be resolved by the API.
 						continue
-					}
-					// Item-reference replay predates source storage metadata.
-					if !meta.Finalized || meta.SourceStoreEnabled {
-						referenceAt = i + 1
 					}
 					continue
 				case fantasy.ContentTypeToolResult:
@@ -909,12 +897,11 @@ func responsesReasoningInputItem(meta *ResponsesReasoningMetadata) (responses.Re
 	return item, true
 }
 
-func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion, sourceStoreEnabled bool) *ResponsesReasoningMetadata {
+func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion) *ResponsesReasoningMetadata {
 	metadata := &ResponsesReasoningMetadata{
-		ItemID:             item.ID,
-		Summary:            make([]string, 0, len(item.Summary)),
-		Finalized:          true,
-		SourceStoreEnabled: sourceStoreEnabled,
+		ItemID:    item.ID,
+		Summary:   make([]string, 0, len(item.Summary)),
+		Finalized: true,
 	}
 	if item.EncryptedContent != "" {
 		metadata.EncryptedContent = &item.EncryptedContent
@@ -925,20 +912,10 @@ func finalResponsesReasoningMetadata(item responses.ResponseOutputItemUnion, sou
 	return metadata
 }
 
-// OpenAI echoes store=false for zero data retention organizations.
-func effectiveResponseStore(requested bool, response *responses.Response) bool {
-	return requested && response.JSON.ExtraFields["store"].Raw() != "false"
-}
-
 func hasResponsesWebSearchTool(tools []responses.ToolUnionParam) bool {
 	return slices.ContainsFunc(tools, func(tool responses.ToolUnionParam) bool {
 		return tool.OfWebSearch != nil || tool.OfWebSearchPreview != nil
 	})
-}
-
-func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
-	return toolCallPart.ToolName == "web_search" ||
-		toolCallPart.ToolName == "web_search_preview"
 }
 
 // droppedSearches records why search results were not replayed, so that
@@ -1001,10 +978,9 @@ func webSearchResult(part fantasy.ToolResultPart) (*WebSearchCallMetadata, strin
 
 // inlineWebSearchCallItem rebuilds a web search call from its result
 // metadata, which unlike the call input keeps the status and the
-// deprecated single query. The item has no id: with an id, a stored
-// request resolves the stored item instead, which fails without its
-// reasoning item right before it and can resolve another credential's
-// item.
+// deprecated single query. The item has no id: with an id, the API
+// resolves the stored item instead, which fails without its reasoning
+// item right before it and can resolve another credential's item.
 func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {
 		return responses.ResponseInputItemUnionParam{}, errors.New("metadata has no action")
@@ -1042,18 +1018,25 @@ func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInp
 	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, nil
 }
 
-func validateResponsesInput(input responses.ResponseInputParam) error {
-	if err := validateResponsesFunctionCallOutputs(input); err != nil {
-		return err
+// dropItemID removes the item ID from a raw output item.
+func dropItemID(raw string) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return json.RawMessage(raw)
 	}
-	return validateResponsesItemReferences(input)
+	delete(fields, "id")
+	stripped, err := json.Marshal(fields)
+	if err != nil {
+		return json.RawMessage(raw)
+	}
+	return stripped
 }
 
 func validateResponsesInputWithOptions(input responses.ResponseInputParam, allowUnpairedFunctionCallOutputs bool) error {
-	if !allowUnpairedFunctionCallOutputs {
-		return validateResponsesInput(input)
+	if allowUnpairedFunctionCallOutputs {
+		return nil
 	}
-	return validateResponsesItemReferences(input)
+	return validateResponsesFunctionCallOutputs(input)
 }
 
 func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) error {
@@ -1127,27 +1110,6 @@ func validateResponsesFunctionCallOutputs(input responses.ResponseInputParam) er
 		}
 	}
 
-	return nil
-}
-
-func validateResponsesItemReferences(input responses.ResponseInputParam) error {
-	previousReferenceID := ""
-	for _, item := range input {
-		if item.OfReasoning != nil {
-			previousReferenceID = item.OfReasoning.ID
-			continue
-		}
-		if item.OfItemReference == nil {
-			previousReferenceID = ""
-			continue
-		}
-
-		itemID := item.OfItemReference.ID
-		if strings.HasPrefix(itemID, "ws_") && !strings.HasPrefix(previousReferenceID, "rs_") {
-			return fmt.Errorf("openai responses prompt has web_search_call item_reference without preceding reasoning item_reference for item_id %q", itemID)
-		}
-		previousReferenceID = itemID
-	}
 	return nil
 }
 
@@ -1383,7 +1345,7 @@ func (o responsesLanguageModel) Generate(ctx context.Context, call fantasy.Call)
 				},
 			})
 		case "reasoning":
-			metadata := finalResponsesReasoningMetadata(outputItem, effectiveResponseStore(params.Store.Value, response))
+			metadata := finalResponsesReasoningMetadata(outputItem)
 			if len(metadata.Summary) == 0 && metadata.EncryptedContent == nil {
 				continue
 			}
@@ -1481,7 +1443,6 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 	ongoingToolCalls := make(map[int64]*ongoingToolCall)
 	hasFunctionCall := false
 	activeReasoning := make(map[string]*reasoningState)
-	sourceStoreEnabled := params.Store.Value
 
 	return func(yield func(fantasy.StreamPart) bool) {
 		if len(warnings) > 0 {
@@ -1500,7 +1461,6 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 			case "response.created":
 				created := event.AsResponseCreated()
 				responseID = created.Response.ID
-				sourceStoreEnabled = effectiveResponseStore(sourceStoreEnabled, &created.Response)
 
 			case "response.output_item.added":
 				added := event.AsResponseOutputItemAdded()
@@ -1691,7 +1651,7 @@ func (o responsesLanguageModel) Stream(ctx context.Context, call fantasy.Call) (
 							Type: fantasy.StreamPartTypeReasoningEnd,
 							ID:   done.Item.ID,
 							ProviderMetadata: fantasy.ProviderMetadata{
-								Name: finalResponsesReasoningMetadata(done.Item, sourceStoreEnabled),
+								Name: finalResponsesReasoningMetadata(done.Item),
 							},
 						}) {
 							return

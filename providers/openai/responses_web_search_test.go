@@ -500,11 +500,10 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	reasoning := fantasy.ReasoningPart{
 		Text: "Open the result.",
 		ProviderOptions: fantasy.ProviderOptions{Name: &ResponsesReasoningMetadata{
-			ItemID:             "rs_01",
-			EncryptedContent:   &encrypted,
-			Summary:            []string{},
-			Finalized:          true,
-			SourceStoreEnabled: true,
+			ItemID:           "rs_01",
+			EncryptedContent: &encrypted,
+			Summary:          []string{},
+			Finalized:        true,
 		}},
 	}
 	search := &WebSearchCallMetadata{
@@ -528,29 +527,10 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 	searchJSON := `{"type":"web_search_call","status":"completed","action":{"type":"search","queries":["go release"]}}`
 	openPageJSON := `{"type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://go.dev/dl/"}}`
 	reasoningJSON := `{"type":"reasoning","id":"rs_01","summary":[],"encrypted_content":"gAAAAABencrypted"}`
-	computerCallJSON := `{"type":"computer_call","id":"cu_01","call_id":"call_01","status":"completed","action":{"type":"screenshot"},"pending_safety_checks":[]}`
-	computerCall := fantasy.ToolCallPart{
-		ToolCallID:      "call_01",
-		ToolName:        "computer",
-		ProviderOptions: fantasy.ProviderOptions{Name: &ComputerUseMetadata{RawJSON: computerCallJSON}},
-	}
 
 	interleaved := slices.Concat(
 		webSearchCallParts("ws_01", search),
 		[]fantasy.MessagePart{reasoning},
-		webSearchCallParts("ws_02", openPage),
-		[]fantasy.MessagePart{answer},
-	)
-	unstoredReasoning := reasoning
-	unstoredReasoning.ProviderOptions = fantasy.ProviderOptions{Name: &ResponsesReasoningMetadata{
-		ItemID:           "rs_01",
-		EncryptedContent: &encrypted,
-		Summary:          []string{},
-		Finalized:        true,
-	}}
-	interleavedFromUnstored := slices.Concat(
-		webSearchCallParts("ws_01", search),
-		[]fantasy.MessagePart{unstoredReasoning},
 		webSearchCallParts("ws_02", openPage),
 		[]fantasy.MessagePart{answer},
 	)
@@ -573,61 +553,11 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
-			// Only a search right after its reasoning item is referenced;
-			// the first one is sent inline. The SDK leaves out the
-			// optional item_reference type.
+			// A stored search is sent inline too, never referenced.
 			name:    "StoredInterleavedWithReasoning",
 			store:   true,
 			content: interleaved,
-			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
-		},
-		{
-			// A caller-built prompt can put the result before its call;
-			// the search is then sent inline once and not also referenced.
-			name:  "StoredResultBeforeCall",
-			store: true,
-			content: []fantasy.MessagePart{
-				reasoning,
-				webSearchCallParts("ws_02", openPage)[1],
-				webSearchCallParts("ws_02", openPage)[0],
-				answer,
-			},
-			want: `[` + userJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
-		},
-		{
-			// An inline item between reasoning and a call means the call
-			// no longer follows its reasoning, so it is not referenced.
-			name:  "StoredInlineBeforeOtherCall",
-			store: true,
-			content: []fantasy.MessagePart{
-				reasoning,
-				webSearchCallParts("ws_01", search)[1],
-				webSearchCallParts("ws_02", openPage)[0],
-				webSearchCallParts("ws_02", openPage)[1],
-				webSearchCallParts("ws_01", search)[0],
-				answer,
-			},
-			want: `[` + userJSON + `,` + reasoningJSON + `,` + searchJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
-		},
-		{
-			name:  "StoredComputerCallBeforeCall",
-			store: true,
-			content: slices.Concat(
-				[]fantasy.MessagePart{reasoning, computerCall},
-				webSearchCallParts("ws_02", openPage),
-			),
-			want: `[` + userJSON + `,` + reasoningJSON + `,` + computerCallJSON + `,` + openPageJSON + `]`,
-		},
-		{
-			// A skipped part between reasoning and a call also means the
-			// call does not follow its reasoning.
-			name:  "StoredSkippedPartBeforeCall",
-			store: true,
-			content: slices.Concat(
-				[]fantasy.MessagePart{reasoning, fantasy.ReasoningPart{Text: "No metadata."}},
-				webSearchCallParts("ws_02", openPage),
-			),
-			want: `[` + userJSON + `,` + reasoningJSON + `,` + openPageJSON + `]`,
+			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
 			name: "UnstoredRepeatedParts",
@@ -636,28 +566,6 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 				webSearchCallParts("ws_01", search),
 			),
 			want: `[` + userJSON + `,` + searchJSON + `]`,
-		},
-		{
-			name:         "StoredResultInLaterMessage",
-			store:        true,
-			content:      []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0]},
-			laterContent: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1], answer},
-			want:         `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
-		},
-		{
-			// A result also kept in a tool message was already replayed.
-			name:             "StoredResultAlsoInToolMessage",
-			store:            true,
-			content:          []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
-			toolContentAfter: []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
-			want:             `[` + userJSON + `,` + reasoningJSON + `,{"id":"ws_02"},` + answerJSON + `]`,
-		},
-		{
-			name:         "StoredCallInLaterMessage",
-			store:        true,
-			content:      []fantasy.MessagePart{webSearchCallParts("ws_02", openPage)[1]},
-			laterContent: []fantasy.MessagePart{reasoning, webSearchCallParts("ws_02", openPage)[0], answer},
-			want:         `[` + userJSON + `,` + openPageJSON + `,` + reasoningJSON + `,` + answerJSON + `]`,
 		},
 		{
 			name: "UnstoredWithoutIDs",
@@ -683,14 +591,6 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
 			content:           []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1], answer},
 			want:              `[` + userJSON + `,` + searchJSON + `,` + answerJSON + `]`,
-		},
-		{
-			// A stored request cannot reference items from an unstored
-			// response.
-			name:    "StoredRequestUnstoredSource",
-			store:   true,
-			content: interleavedFromUnstored,
-			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
 			name:    "UnstoredSearchOnly",
