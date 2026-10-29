@@ -4770,30 +4770,6 @@ func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
 		},
 	}
 
-	t.Run("store true emits item_reference for reasoning", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings, err := toResponsesPrompt(prompt, "system", true)
-
-		require.NoError(t, err)
-		require.Empty(t, warnings)
-
-		// Unfinalized metadata (stream placeholders or rows persisted
-		// before Finalized existed) falls back to an item_reference with
-		// store=true. Order: user, item_reference(rs_*), assistant text,
-		// user.
-		require.Len(t, input, 4)
-
-		for _, item := range input {
-			require.Nil(t, item.OfReasoning,
-				"unfinalized reasoning must not be replayed inline")
-		}
-
-		require.NotNil(t, input[1].OfItemReference,
-			"expected reasoning replayed via item_reference")
-		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
-	})
-
 	t.Run("store true skips reasoning when item id missing", func(t *testing.T) {
 		t.Parallel()
 
@@ -4911,7 +4887,7 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		},
 	}
 
-	t.Run("store true references reasoning before the search", func(t *testing.T) {
+	t.Run("store true skips reasoning before the search", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system", true)
@@ -4919,14 +4895,13 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Order: user, item_reference(rs_*), web_search_call,
-		// assistant text, user.
-		require.Len(t, input, 5)
-
-		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, reasoningItemID, input[1].OfItemReference.ID)
-
-		require.NotNil(t, input[2].OfWebSearchCall)
+		// Order: user, web_search_call, assistant text, user.
+		require.Len(t, input, 4)
+		require.NotNil(t, input[1].OfWebSearchCall)
+		for _, item := range input {
+			require.Nil(t, item.OfItemReference)
+			require.Nil(t, item.OfReasoning)
+		}
 	})
 
 	t.Run("store false replays the search without reasoning", func(t *testing.T) {
@@ -5002,19 +4977,15 @@ func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 
-	// Order: user, item_reference(rs_003), function_call(call_003),
-	// function_call_output(call_003), user.
-	require.Len(t, input, 5)
+	// Reasoning without encrypted content is skipped. Order: user,
+	// function_call(call_003), function_call_output(call_003), user.
+	require.Len(t, input, 4)
 
-	require.NotNil(t, input[1].OfItemReference)
-	require.Equal(t, reasoningItemID, input[1].OfItemReference.ID,
-		"reasoning item_reference must precede function_call")
+	require.NotNil(t, input[1].OfFunctionCall)
+	require.Equal(t, functionCallID, input[1].OfFunctionCall.CallID)
 
-	require.NotNil(t, input[2].OfFunctionCall)
-	require.Equal(t, functionCallID, input[2].OfFunctionCall.CallID)
-
-	require.NotNil(t, input[3].OfFunctionCallOutput)
-	require.Equal(t, functionCallID, input[3].OfFunctionCallOutput.CallID)
+	require.NotNil(t, input[2].OfFunctionCallOutput)
+	require.Equal(t, functionCallID, input[2].OfFunctionCallOutput.CallID)
 }
 
 func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {

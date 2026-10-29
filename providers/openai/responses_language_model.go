@@ -682,13 +682,10 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 					if item, ok := responsesReasoningInputItem(meta); ok {
 						input = append(input, item)
-					} else if store {
-						input = append(input, responses.ResponseInputItemParamOfItemReference(meta.ItemID))
-					} else {
-						// Unstored reasoning without finalized encrypted
-						// content cannot be resolved by the API.
-						continue
 					}
+					// Reasoning that cannot be sent inline is skipped, not
+					// referenced: a reference to an item OpenAI did not store
+					// fails the whole request.
 					continue
 				case fantasy.ContentTypeToolResult:
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
