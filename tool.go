@@ -41,7 +41,9 @@ type ToolResponse struct {
 	Data []byte `json:"data,omitempty"`
 	// MediaType specifies the MIME type of the media (e.g., "image/png", "audio/wav").
 	MediaType string `json:"media_type,omitempty"`
-	Metadata  string `json:"metadata,omitempty"`
+	// Filename is the optional name of the media file (e.g., "report.pdf").
+	Filename string `json:"filename,omitempty"`
+	Metadata string `json:"metadata,omitempty"`
 	// IsError marks the response as a failure and is non fatal
 	IsError bool `json:"is_error"`
 	// StopTurn ends the agent loop after this toolcall and is fatal

@@ -115,6 +115,22 @@ func TestMessageJSONSerialization(t *testing.T) {
 			},
 		},
 		{
+			name: "message with tool result - PDF media output with filename",
+			message: Message{
+				Role: MessageRoleTool,
+				Content: []MessagePart{
+					ToolResultPart{
+						ToolCallID: "call_790",
+						Output: ToolResultOutputContentMedia{
+							Data:      "JVBERi0xLjQ=",
+							MediaType: "application/pdf",
+							Filename:  "report.pdf",
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "complex message with mixed content",
 			message: Message{
 				Role: MessageRoleAssistant,
@@ -282,6 +298,9 @@ func compareToolResultOutput(t *testing.T, index int, original, decoded ToolResu
 		}
 		if orig.MediaType != dec.MediaType {
 			t.Errorf("content[%d] tool result media type mismatch: got %q, want %q", index, dec.MediaType, orig.MediaType)
+		}
+		if orig.Filename != dec.Filename {
+			t.Errorf("content[%d] tool result media filename mismatch: got %q, want %q", index, dec.Filename, orig.Filename)
 		}
 	}
 }
@@ -496,6 +515,36 @@ func TestEdgeCases(t *testing.T) {
 		filePart := decoded.Content[0].(FilePart)
 		if len(filePart.Data) != 0 {
 			t.Errorf("expected empty data, got %d bytes", len(filePart.Data))
+		}
+	})
+
+	t.Run("media tool result without filename", func(t *testing.T) {
+		// Messages stored before media had a filename must still decode.
+		stored := `{
+			"role": "tool",
+			"content": [
+				{
+					"type": "tool-result",
+					"data": {
+						"tool_call_id": "call_123",
+						"output": {
+							"type": "media",
+							"data": {"data": "AQID", "media_type": "image/png", "text": "screenshot"}
+						}
+					}
+				}
+			]
+		}`
+
+		var decoded Message
+		if err := json.Unmarshal([]byte(stored), &decoded); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		toolResult := decoded.Content[0].(ToolResultPart)
+		want := ToolResultOutputContentMedia{Data: "AQID", MediaType: "image/png", Text: "screenshot"}
+		if got := toolResult.Output.(ToolResultOutputContentMedia); got != want {
+			t.Errorf("media output mismatch: got %+v, want %+v", got, want)
 		}
 	})
 
