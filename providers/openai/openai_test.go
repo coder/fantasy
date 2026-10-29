@@ -4783,8 +4783,8 @@ func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Without an ItemID we cannot reference the reasoning
-		// item. Order: user, assistant text, user.
+		// Without an ItemID the reasoning cannot be sent. Order: user,
+		// assistant text, user.
 		require.Len(t, input, 3)
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning)
