@@ -590,7 +590,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:    `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name: "Pre62SearchWithoutStatus",
+			name: "LegacySearchWithoutStatus",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",
@@ -603,7 +603,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		{
 			// Before #62 only Type and Query were saved. The API accepts a
 			// find_in_page action without url and pattern.
-			name: "Pre62FindInPageWithoutStatus",
+			name: "LegacyFindInPageWithoutStatus",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",

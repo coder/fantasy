@@ -124,7 +124,8 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		encrypted *string
 		summary   []string
 		webSearch bool
-		// unfinalized marks metadata saved before Finalized existed.
+		// unfinalized clears Finalized, as in streaming placeholders and
+		// metadata saved before Finalized existed.
 		unfinalized bool
 		// want is the reasoning input item; nil means none is sent.
 		want map[string]any
@@ -161,11 +162,6 @@ func TestResponsesReplay_FinalizedReasoningInput(t *testing.T) {
 		{
 			name:        "unfinalized store true",
 			store:       true,
-			encrypted:   new("enc-final"),
-			unfinalized: true,
-		},
-		{
-			name:        "unfinalized store false",
 			encrypted:   new("enc-final"),
 			unfinalized: true,
 		},
