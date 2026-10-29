@@ -4709,7 +4709,7 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 	require.Nil(t, input[1].OfItemReference)
 }
 
-func TestResponsesToPrompt_ReasoningWithoutEncryptedContent(t *testing.T) {
+func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 	t.Parallel()
 
 	encryptedContent := "gAAAAABpvAwtDPh5dSXW86hwbwoTo4DJHANQ"
