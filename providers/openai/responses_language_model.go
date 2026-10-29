@@ -586,6 +586,7 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, _ bool) 
 					// Provider-executed calls are replayed from their
 					// results, which keep the full action.
 					if toolCallPart.ProviderExecuted {
+						dropped.add(toolCallPart.ToolCallID, "it has no result part", dropFromCall)
 						continue
 					}
 
@@ -612,12 +613,12 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, _ bool) 
 						continue
 					}
 					if meta == nil {
-						dropped.add(searchID, "it has no web search metadata", false)
+						dropped.add(searchID, "it has no web search metadata", dropFromResult)
 						continue
 					}
 					item, err := inlineWebSearchCallItem(meta)
 					if err != nil {
-						dropped.add(searchID, err.Error(), false)
+						dropped.add(searchID, err.Error(), dropFromResult)
 						continue
 					}
 					input = append(input, item)
@@ -661,9 +662,9 @@ func toResponsesPrompt(prompt fantasy.Prompt, systemMessageMode string, _ bool) 
 				// replay it.
 				if toolResultPart.ProviderExecuted {
 					if meta, searchID := webSearchResult(toolResultPart); meta == nil {
-						dropped.add(searchID, "it has no web search metadata", true)
+						dropped.add(searchID, "it has no web search metadata", dropFromToolMessage)
 					} else {
-						dropped.add(searchID, "it is in a tool message, and is replayed only from an assistant message", true)
+						dropped.add(searchID, "it is in a tool message, and is replayed only from an assistant message", dropFromToolMessage)
 					}
 					continue
 				}
@@ -760,25 +761,35 @@ func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnio
 	return false
 }
 
-// droppedSearches records why search results were not replayed, so that
+// droppedSearches records why search parts were not replayed, so that
 // each search the whole prompt never replays gets one warning. Another
-// part of the prompt can still replay a search, and a reason from an
-// assistant message is more specific than one from a tool message.
+// part of the prompt can still replay a search, and a later part's
+// reason replaces an earlier one's when it is more specific.
 type droppedSearches struct {
 	list  []droppedSearch
 	index map[string]int
 }
 
+// dropSource is where a dropped search part was, from least to most
+// specific reason.
+type dropSource int
+
+const (
+	dropFromCall dropSource = iota
+	dropFromToolMessage
+	dropFromResult
+)
+
 type droppedSearch struct {
-	id              string
-	reason          string
-	fromToolMessage bool
+	id     string
+	reason string
+	source dropSource
 }
 
-func (d *droppedSearches) add(id, reason string, fromToolMessage bool) {
-	search := droppedSearch{id: id, reason: reason, fromToolMessage: fromToolMessage}
+func (d *droppedSearches) add(id, reason string, source dropSource) {
+	search := droppedSearch{id: id, reason: reason, source: source}
 	if i, ok := d.index[id]; ok {
-		if d.list[i].fromToolMessage && !fromToolMessage {
+		if source > d.list[i].source {
 			d.list[i] = search
 		}
 		return
@@ -822,7 +833,7 @@ func webSearchResult(part fantasy.ToolResultPart) (*WebSearchCallMetadata, strin
 // metadata, which unlike the call input keeps the status and the
 // deprecated single query. The item has no id: an item_reference, or an
 // item with an id, makes a stored request resolve the stored item, which
-// fails without its reasoning item right before it, and an unstored
+// can fail without its reasoning item right before it, and an unstored
 // request cannot resolve it at all.
 func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
 	if meta.Action == nil {

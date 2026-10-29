@@ -647,6 +647,13 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			wantWarning: `dropping web search "ws_01": metadata has no action`,
 		},
 		{
+			name:        "CallWithoutResult",
+			content:     []fantasy.MessagePart{webSearchCallParts("ws_01", search)[0], answer},
+			want:        `[` + userJSON + `,` + answerJSON + `]`,
+			wantWarning: `dropping web search "ws_01": it has no result part`,
+		},
+		{
+			// The result's reason replaces the call's.
 			name:        "WithoutMetadata",
 			content:     append(webSearchCallParts("ws_01", nil), answer),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
