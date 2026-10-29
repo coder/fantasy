@@ -4696,28 +4696,34 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	t.Run("store false skips item reference", func(t *testing.T) {
+	t.Run("store false skips search without metadata", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system instructions", false)
 
 		require.NoError(t, err)
 
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping web search "ws_01": it has no web search metadata`,
+		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=false")
 		require.Nil(t, input[0].OfItemReference)
 		require.Nil(t, input[1].OfItemReference)
 	})
 
-	t.Run("store true skips item reference", func(t *testing.T) {
+	t.Run("store true skips unreferenced search without metadata", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(prompt, "system instructions", true)
 
 		require.NoError(t, err)
 
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping web search "ws_01": it has no web search metadata`,
+		}}, warnings)
 		require.Len(t, input, 2,
 			"expected user + assistant text when store=true")
 		require.Nil(t, input[0].OfItemReference)
@@ -4924,10 +4930,14 @@ func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
 		input, warnings, err := toResponsesPrompt(prompt, "system", false)
 
 		require.NoError(t, err)
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping web search "ws_002": it has no web search metadata`,
+		}}, warnings)
 
-		// Both reasoning and the provider-executed web_search_call
-		// are skipped under store=false. user, assistant text, user.
+		// Reasoning without encrypted content is skipped under
+		// store=false, and so is the web_search_call, whose result has
+		// no metadata to send inline. user, assistant text, user.
 		require.Len(t, input, 3)
 		for _, item := range input {
 			require.Nil(t, item.OfItemReference)

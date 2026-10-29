@@ -468,7 +468,8 @@ type WebSearchAction struct {
 // WebSearchCallMetadata stores structured data from a web_search_call
 // output item for round-tripping through multi-turn conversations.
 // The ItemID is used with item_reference for efficient round-tripping
-// when response storage is enabled.
+// when response storage is enabled. When the call cannot be referenced,
+// Status and Action rebuild it inline.
 type WebSearchCallMetadata struct {
 	// ItemID is the server-side ID of the web_search_call output item.
 	ItemID string `json:"item_id"`

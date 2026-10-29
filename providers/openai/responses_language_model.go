@@ -491,6 +491,10 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
+	// A search's call and result parts can each replay it, possibly from
+	// different messages; only the first one does.
+	replayedSearches := make(map[string]bool)
+	var dropped droppedSearches
 	for _, msg := range prompt {
 		switch msg.Role {
 		case fantasy.MessageRoleSystem:
@@ -610,8 +614,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 
 		case fantasy.MessageRoleAssistant:
 			startIdx := len(input)
-			canReferenceWebSearch := false
-			for _, c := range msg.Content {
+			// referenceAt is the index of the part that can reference a
+			// stored search: the part right after a reasoning part from a
+			// stored response. It counts parts, not input items, because a
+			// skipped part means the search did not directly follow its
+			// reasoning in the response.
+			referenceAt := -1
+			for i, c := range msg.Content {
 				switch c.GetType() {
 				case fantasy.ContentTypeText:
 					textPart, ok := fantasy.AsContentType[fantasy.TextPart](c)
@@ -629,7 +638,6 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						message.OfMessage.Phase = responses.EasyInputMessagePhase(metadata.Phase)
 					}
 					input = append(input, message)
-					canReferenceWebSearch = false
 
 				case fantasy.ContentTypeToolCall:
 					toolCallPart, ok := fantasy.AsContentType[fantasy.ToolCallPart](c)
@@ -642,12 +650,13 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					if toolCallPart.ProviderExecuted {
-						if store && canReferenceWebSearch &&
+						if store && referenceAt == i &&
 							isResponsesWebSearchToolCall(toolCallPart) &&
-							toolCallPart.ToolCallID != "" {
+							toolCallPart.ToolCallID != "" &&
+							!replayedSearches[toolCallPart.ToolCallID] {
 							input = append(input, responses.ResponseInputItemParamOfItemReference(toolCallPart.ToolCallID))
+							replayedSearches[toolCallPart.ToolCallID] = true
 						}
-						canReferenceWebSearch = false
 						continue
 					}
 
@@ -662,13 +671,11 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					}
 
 					input = append(input, responses.ResponseInputItemParamOfFunctionCall(toolCallPart.Input, toolCallPart.ToolCallID, toolCallPart.ToolName))
-					canReferenceWebSearch = false
 				case fantasy.ContentTypeSource:
 					// Source citations from web search are not a
 					// recognised Responses API input type; skip.
 					continue
 				case fantasy.ContentTypeReasoning:
-					canReferenceWebSearch = false
 					reasoningPart, ok := fantasy.AsContentType[fantasy.ReasoningPart](c)
 					if !ok {
 						warnings = append(warnings, fantasy.CallWarning{
@@ -691,8 +698,32 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						continue
 					}
 					// Item-reference replay predates source storage metadata.
-					canReferenceWebSearch = !meta.Finalized || meta.SourceStoreEnabled
+					if !meta.Finalized || meta.SourceStoreEnabled {
+						referenceAt = i + 1
+					}
 					continue
+				case fantasy.ContentTypeToolResult:
+					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
+					if !ok || !toolResultPart.ProviderExecuted {
+						continue
+					}
+					meta, searchID := webSearchResult(toolResultPart)
+					if replayedSearches[searchID] {
+						continue
+					}
+					if meta == nil {
+						dropped.add(searchID, "it has no web search metadata", false)
+						continue
+					}
+					item, err := inlineWebSearchCallItem(meta)
+					if err != nil {
+						dropped.add(searchID, err.Error(), false)
+						continue
+					}
+					input = append(input, item)
+					if searchID != "" {
+						replayedSearches[searchID] = true
+					}
 				}
 			}
 			if !hasVisibleResponsesAssistantContent(input, startIdx) {
@@ -724,9 +755,15 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 					continue
 				}
 
-				// Provider-executed tool results (e.g. web search)
-				// are already round-tripped via the tool call; skip.
+				// A tool message has lost the result's position among the
+				// assistant's items, so only the assistant branch can
+				// replay it.
 				if toolResultPart.ProviderExecuted {
+					if meta, searchID := webSearchResult(toolResultPart); meta == nil {
+						dropped.add(searchID, "it has no web search metadata", true)
+					} else {
+						dropped.add(searchID, "it is in a tool message, and is replayed only from an assistant message", true)
+					}
 					continue
 				}
 
@@ -850,6 +887,8 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 		}
 	}
 
+	warnings = append(warnings, dropped.warnings(replayedSearches)...)
+
 	if err := validateResponsesInputWithOptions(input, allowUnpairedFunctionCallOutputs); err != nil {
 		return nil, warnings, err
 	}
@@ -900,6 +939,107 @@ func hasResponsesWebSearchTool(tools []responses.ToolUnionParam) bool {
 func isResponsesWebSearchToolCall(toolCallPart fantasy.ToolCallPart) bool {
 	return toolCallPart.ToolName == "web_search" ||
 		toolCallPart.ToolName == "web_search_preview"
+}
+
+// droppedSearches records why search results were not replayed, so that
+// each search the whole prompt never replays gets one warning. Another
+// part of the prompt can still replay a search, and a reason from an
+// assistant message is more specific than one from a tool message.
+type droppedSearches struct {
+	list  []droppedSearch
+	index map[string]int
+}
+
+type droppedSearch struct {
+	id              string
+	reason          string
+	fromToolMessage bool
+}
+
+func (d *droppedSearches) add(id, reason string, fromToolMessage bool) {
+	search := droppedSearch{id: id, reason: reason, fromToolMessage: fromToolMessage}
+	if i, ok := d.index[id]; ok {
+		if d.list[i].fromToolMessage && !fromToolMessage {
+			d.list[i] = search
+		}
+		return
+	}
+	// Searches without an id cannot be told apart, so each gets a warning.
+	if id != "" {
+		if d.index == nil {
+			d.index = make(map[string]int)
+		}
+		d.index[id] = len(d.list)
+	}
+	d.list = append(d.list, search)
+}
+
+func (d *droppedSearches) warnings(replayed map[string]bool) []fantasy.CallWarning {
+	var warnings []fantasy.CallWarning
+	for _, search := range d.list {
+		if search.id != "" && replayed[search.id] {
+			continue
+		}
+		warnings = append(warnings, fantasy.CallWarning{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: fmt.Sprintf("dropping web search %q: %s", search.id, search.reason),
+		})
+	}
+	return warnings
+}
+
+// webSearchResult returns a provider-executed result's web search
+// metadata, if any, and the id of its search. A caller-built result can
+// leave the call ID empty while its metadata still names the search.
+func webSearchResult(part fantasy.ToolResultPart) (*WebSearchCallMetadata, string) {
+	meta, _ := part.ProviderOptions[Name].(*WebSearchCallMetadata)
+	if part.ToolCallID == "" && meta != nil {
+		return meta, meta.ItemID
+	}
+	return meta, part.ToolCallID
+}
+
+// inlineWebSearchCallItem rebuilds a web search call from its result
+// metadata, which unlike the call input keeps the status and the
+// deprecated single query. The item has no id: with an id, a stored
+// request resolves the stored item instead, which fails without its
+// reasoning item right before it and can resolve another credential's
+// item.
+func inlineWebSearchCallItem(meta *WebSearchCallMetadata) (responses.ResponseInputItemUnionParam, error) {
+	if meta.Action == nil {
+		return responses.ResponseInputItemUnionParam{}, errors.New("metadata has no action")
+	}
+	// The API rejects the whole request for any other action type.
+	switch meta.Action.Type {
+	case "search", "open_page", "find_in_page":
+	default:
+		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("action type %q cannot be replayed", meta.Action.Type)
+	}
+	// Sources are ignored on input, and copying only these fields keeps
+	// a field added to the stored metadata from breaking replay.
+	type action struct {
+		Type    string   `json:"type"`
+		Queries []string `json:"queries,omitempty"`
+		Query   string   `json:"query,omitempty"`
+		URL     string   `json:"url,omitempty"`
+		Pattern string   `json:"pattern,omitempty"`
+	}
+	item := param.Override[responses.ResponseFunctionWebSearchParam](struct {
+		Type   string `json:"type"`
+		Status string `json:"status,omitempty"`
+		Action action `json:"action"`
+	}{
+		Type:   "web_search_call",
+		Status: meta.Status,
+		Action: action{
+			Type:    meta.Action.Type,
+			Queries: meta.Action.Queries,
+			Query:   meta.Action.Query,
+			URL:     meta.Action.URL,
+			Pattern: meta.Action.Pattern,
+		},
+	})
+	return responses.ResponseInputItemUnionParam{OfWebSearchCall: &item}, nil
 }
 
 func validateResponsesInput(input responses.ResponseInputParam) error {
@@ -1018,7 +1158,7 @@ func hasVisibleResponsesUserContent(content responses.ResponseInputMessageConten
 func hasVisibleResponsesAssistantContent(items []responses.ResponseInputItemUnionParam, startIdx int) bool {
 	// Check if we added any assistant content parts from this message
 	for i := startIdx; i < len(items); i++ {
-		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil {
+		if items[i].OfMessage != nil || items[i].OfFunctionCall != nil || items[i].OfItemReference != nil || items[i].OfReasoning != nil || items[i].OfComputerCall != nil || items[i].OfWebSearchCall != nil {
 			return true
 		}
 	}

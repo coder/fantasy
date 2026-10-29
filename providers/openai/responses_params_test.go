@@ -576,14 +576,17 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 		require.Empty(t, warnings)
 	})
 
-	t.Run("provider executed output is skipped", func(t *testing.T) {
+	t.Run("provider executed output is skipped with a warning", func(t *testing.T) {
 		t.Parallel()
 
 		input, warnings, err := toResponsesPrompt(fantasy.Prompt{
 			testResponsesProviderToolResultMessage("ws_01"),
 		}, "system", false)
 		require.NoError(t, err)
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping web search "ws_01": it has no web search metadata`,
+		}}, warnings)
 		require.Empty(t, input)
 	})
 
@@ -595,7 +598,10 @@ func TestPrepareParams_ValidatesFunctionCallOutputPairing(t *testing.T) {
 			testResponsesProviderToolResultMessage("call_provider_result"),
 		}, nil))
 		require.EqualError(t, err, `openai responses prompt has function_call without function_call_output for call_id "call_provider_result"`)
-		require.Empty(t, warnings)
+		require.Equal(t, []fantasy.CallWarning{{
+			Type:    fantasy.CallWarningTypeOther,
+			Message: `dropping web search "call_provider_result": it has no web search metadata`,
+		}}, warnings)
 	})
 }
 
