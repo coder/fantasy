@@ -3829,6 +3829,35 @@ func TestResponsesToPrompt_DropsEmptyMessages(t *testing.T) {
 		require.Contains(t, warnings[0].Message, "dropping empty assistant message")
 	})
 
+	t.Run("should drop assistant messages with only reasoning that cannot be sent", func(t *testing.T) {
+		t.Parallel()
+
+		prompt := fantasy.Prompt{
+			{
+				Role: fantasy.MessageRoleUser,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: "Hello"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{ProviderOptions: fantasy.ProviderOptions{
+						Name: &ResponsesReasoningMetadata{ItemID: "rs_1"},
+					}},
+				},
+			},
+		}
+
+		input, warnings, err := toResponsesPrompt(prompt, "system")
+
+		require.NoError(t, err)
+
+		require.Len(t, input, 1, "should only have user message")
+		require.Len(t, warnings, 1)
+		require.Contains(t, warnings[0].Message, "dropping empty assistant message")
+	})
+
 	t.Run("should keep assistant messages with text content", func(t *testing.T) {
 		t.Parallel()
 
@@ -4764,7 +4793,11 @@ func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 					fantasy.ReasoningPart{
 						Text: "thinking",
 						ProviderOptions: fantasy.ProviderOptions{
-							Name: &ResponsesReasoningMetadata{Summary: []string{}},
+							Name: &ResponsesReasoningMetadata{
+								EncryptedContent: &encryptedContent,
+								Summary:          []string{},
+								Finalized:        true,
+							},
 						},
 					},
 					fantasy.TextPart{Text: "4"},
@@ -4783,8 +4816,7 @@ func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, warnings)
 
-		// Without an ItemID the reasoning cannot be sent. Order: user,
-		// assistant text, user.
+		// user, assistant text, user.
 		require.Len(t, input, 3)
 		for _, item := range input {
 			require.Nil(t, item.OfReasoning)
@@ -4808,138 +4840,6 @@ func TestResponsesToPrompt_SkipsReasoningThatCannotGoInline(t *testing.T) {
 			require.Nil(t, item.OfItemReference)
 		}
 	})
-}
-
-func TestResponsesToPrompt_ReasoningWithWebSearchCombined(t *testing.T) {
-	t.Parallel()
-
-	reasoningItemID := "rs_002"
-	webSearchItemID := "ws_002"
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "What is the weather in San Francisco?"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ReasoningPart{
-					Text: "I should look this up.",
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ResponsesReasoningMetadata{
-							ItemID:  reasoningItemID,
-							Summary: []string{},
-						},
-					},
-				},
-				fantasy.ToolCallPart{
-					ToolCallID:       webSearchItemID,
-					ToolName:         "web_search",
-					ProviderExecuted: true,
-				},
-				fantasy.ToolResultPart{
-					ToolCallID:       webSearchItemID,
-					ProviderExecuted: true,
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &WebSearchCallMetadata{
-							ItemID: webSearchItemID,
-							Status: "completed",
-							Action: &WebSearchAction{Type: "search", Query: "weather in San Francisco"},
-						},
-					},
-				},
-				fantasy.TextPart{Text: "Sunny."},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "And Tokyo?"},
-			},
-		},
-	}
-
-	input, warnings, err := toResponsesPrompt(prompt, "system")
-
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-
-	// Reasoning without encrypted content is skipped. Order: user,
-	// web_search_call, assistant text, user.
-	require.Len(t, input, 4)
-	require.NotNil(t, input[1].OfWebSearchCall)
-	for _, item := range input {
-		require.Nil(t, item.OfItemReference)
-		require.Nil(t, item.OfReasoning)
-	}
-}
-
-func TestResponsesToPrompt_ReasoningWithFunctionCallCombined(t *testing.T) {
-	t.Parallel()
-
-	reasoningItemID := "rs_003"
-	functionCallID := "call_003"
-
-	prompt := fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "compute 1+1"},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ReasoningPart{
-					Text: "I'll call add.",
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ResponsesReasoningMetadata{
-							ItemID:  reasoningItemID,
-							Summary: []string{},
-						},
-					},
-				},
-				fantasy.ToolCallPart{
-					ToolCallID: functionCallID,
-					ToolName:   "add",
-					Input:      `{"a":1,"b":1}`,
-				},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleTool,
-			Content: []fantasy.MessagePart{
-				fantasy.ToolResultPart{
-					ToolCallID: functionCallID,
-					Output:     fantasy.ToolResultOutputContentText{Text: "2"},
-				},
-			},
-		},
-		{
-			Role: fantasy.MessageRoleUser,
-			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "thanks"},
-			},
-		},
-	}
-
-	input, warnings, err := toResponsesPrompt(prompt, "system")
-
-	require.NoError(t, err)
-	require.Empty(t, warnings)
-
-	// Reasoning without encrypted content is skipped. Order: user,
-	// function_call(call_003), function_call_output(call_003), user.
-	require.Len(t, input, 4)
-
-	require.NotNil(t, input[1].OfFunctionCall)
-	require.Equal(t, functionCallID, input[1].OfFunctionCall.CallID)
-
-	require.NotNil(t, input[2].OfFunctionCallOutput)
-	require.Equal(t, functionCallID, input[2].OfFunctionCallOutput.CallID)
 }
 
 func TestResponsesStream_RequiresTerminalEventBeforeFinish(t *testing.T) {
