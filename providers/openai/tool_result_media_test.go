@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"charm.land/fantasy"
@@ -331,22 +332,63 @@ func TestToResponsesPrompt_MediaToolResult_ImagePNG(t *testing.T) {
 	input, warnings, err := toResponsesPrompt(prompt, "system", false)
 	require.NoError(t, err)
 	require.Empty(t, warnings)
-	// Assistant function call + function_call_output + synthetic user image
-	// message.
-	require.Len(t, input, 3)
+	// Assistant function call + function_call_output that holds the image.
+	require.Len(t, input, 2)
+	requireJSONEq(t, `{
+		"type": "function_call_output",
+		"call_id": "img-resp-1",
+		"output": [{"type": "input_image", "image_url": "data:image/png;base64,`+imageData+`"}]
+	}`, input[1])
+}
 
-	funcOut := input[1].OfFunctionCallOutput
-	require.NotNil(t, funcOut)
-	require.Equal(t, "img-resp-1", funcOut.CallID)
-	require.Contains(t, funcOut.Output.OfString.Value, "image/png")
+// Media stays inside its function_call_output, so a parallel batch has no
+// user message between its outputs.
+func TestToResponsesPrompt_MediaToolResult_PDFInParallelBatch(t *testing.T) {
+	t.Parallel()
 
-	userMsg := input[2].OfMessage
-	require.NotNil(t, userMsg)
-	parts := userMsg.Content.OfInputItemContentList
-	require.Len(t, parts, 1)
-	imagePart := parts[0].OfInputImage
-	require.NotNil(t, imagePart)
-	require.Equal(t, "data:image/png;base64,"+imageData, imagePart.ImageURL.Value)
+	pdfData := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 fake"))
+	prompt := fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{ToolCallID: "pdf-resp-1", ToolName: "read", Input: "{}"},
+				fantasy.ToolCallPart{ToolCallID: "txt-resp-1", ToolName: "read", Input: "{}"},
+			},
+		},
+		{
+			Role: fantasy.MessageRoleTool,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolResultPart{
+					ToolCallID: "pdf-resp-1",
+					Output: fantasy.ToolResultOutputContentMedia{
+						Data:      pdfData,
+						MediaType: "application/pdf",
+						Text:      "Quarterly report.",
+						Filename:  "report.pdf",
+					},
+				},
+				fantasy.ToolResultPart{
+					ToolCallID: "txt-resp-1",
+					Output:     fantasy.ToolResultOutputContentText{Text: "ok"},
+				},
+			},
+		},
+	}
+
+	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	// Two function calls + two function_call_outputs, and no user message.
+	require.Len(t, input, 4)
+	requireJSONEq(t, `{
+		"type": "function_call_output",
+		"call_id": "pdf-resp-1",
+		"output": [
+			{"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,`+pdfData+`"},
+			{"type": "input_text", "text": "Quarterly report."}
+		]
+	}`, input[2])
+	requireJSONEq(t, `{"type": "function_call_output", "call_id": "txt-resp-1", "output": "ok"}`, input[3])
 }
 
 func TestToResponsesPrompt_MediaToolResult_UnsupportedMediaType(t *testing.T) {
@@ -376,11 +418,20 @@ func TestToResponsesPrompt_MediaToolResult_UnsupportedMediaType(t *testing.T) {
 	input, warnings, err := toResponsesPrompt(prompt, "system", false)
 	require.NoError(t, err)
 
-	// Assistant function call + function_call_output, but no synthetic user
-	// image message.
+	// Assistant function call + text function_call_output.
 	require.Len(t, input, 2)
-	require.NotNil(t, input[1].OfFunctionCallOutput)
-	require.Equal(t, "vid-resp-1", input[1].OfFunctionCallOutput.CallID)
+	requireJSONEq(t, `{
+		"type": "function_call_output",
+		"call_id": "vid-resp-1",
+		"output": "The tool returned video/mp4 content, which cannot be displayed."
+	}`, input[1])
 	require.Len(t, warnings, 1)
 	require.Contains(t, warnings[0].Message, "video/mp4")
+}
+
+func requireJSONEq(t *testing.T, want string, got any) {
+	t.Helper()
+	data, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.JSONEq(t, want, string(data))
 }

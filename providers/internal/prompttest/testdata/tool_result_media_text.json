@@ -1,0 +1,27 @@
+{
+  "openai,openaicompat,openrouter,vercel": {
+    "messages": [
+      {
+        "tool_calls": [
+          {
+            "id": "c1",
+            "function": {
+              "arguments": "{}",
+              "name": "read"
+            },
+            "type": "function"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": "The tool returned text/plain content, which cannot be displayed.",
+        "tool_call_id": "c1",
+        "role": "tool"
+      }
+    ],
+    "warnings": [
+      "other: tool result media type text/plain not supported, sending text placeholder only"
+    ]
+  }
+}

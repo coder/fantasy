@@ -2,11 +2,11 @@ package openai
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/openai/openai-go/v3"
 
 	"charm.land/fantasy"
+	"charm.land/fantasy/providers/internal/filepart"
 )
 
 // ToolCacheTypeFunc returns the prompt-cache hint to attach to the tool result
@@ -104,20 +104,20 @@ func tagToolCacheControl(msg *openai.ChatCompletionToolMessageParam, cacheType s
 
 // ToolResultMediaMessages maps a tool-result media output to the chat
 // completions messages that convey it: a text tool message that keeps the
-// tool_call/tool_result pairing valid, plus the user messages holding the image
-// or audio itself, which a tool message cannot carry.
+// tool_call/tool_result pairing valid, plus the user messages holding the media
+// itself, which a tool message cannot carry.
 //
 // The two are returned separately because the tool message must stay inside the
 // run of tool messages while the media has to land after it. Unsupported media
-// types return only the tool message, plus a warning.
+// types return only the tool message, which says so, plus a warning.
 func ToolResultMediaMessages(output fantasy.ToolResultOutputContentMedia, toolCallID string) (openai.ChatCompletionMessageParamUnion, []openai.ChatCompletionMessageParamUnion, []fantasy.CallWarning) {
 	mediaPart, warning, emit := toolResultMediaUserPart(output)
 
 	placeholder := output.Text
 	if placeholder == "" && emit {
 		placeholder = fmt.Sprintf("The tool returned %s content; see the following user message.", output.MediaType)
-	} else if placeholder == "" {
-		placeholder = fmt.Sprintf("The tool returned %s content, which cannot be displayed.", output.MediaType)
+	} else if !emit {
+		placeholder = undisplayableToolMediaText(output)
 	}
 	toolMessage := openai.ToolMessage(placeholder, toolCallID)
 
@@ -133,33 +133,14 @@ func ToolResultMediaMessages(output fantasy.ToolResultOutputContentMedia, toolCa
 }
 
 // toolResultMediaUserPart maps a tool-result media output to a user content
-// part, reporting whether the caller should emit it.
+// part with the same rules as a user file, reporting whether the caller should
+// emit it.
 func toolResultMediaUserPart(output fantasy.ToolResultOutputContentMedia) (openai.ChatCompletionContentPartUnionParam, *fantasy.CallWarning, bool) {
-	switch {
-	case strings.HasPrefix(output.MediaType, "image/"):
-		data := "data:" + output.MediaType + ";base64," + output.Data
-		imageBlock := openai.ChatCompletionContentPartImageParam{
-			ImageURL: openai.ChatCompletionContentPartImageImageURLParam{URL: data},
-		}
-		return openai.ChatCompletionContentPartUnionParam{OfImageURL: &imageBlock}, nil, true
-	case output.MediaType == "audio/wav", output.MediaType == "audio/mpeg", output.MediaType == "audio/mp3":
-		format := "wav"
-		if output.MediaType != "audio/wav" {
-			format = "mp3"
-		}
-		audioBlock := openai.ChatCompletionContentPartInputAudioParam{
-			InputAudio: openai.ChatCompletionContentPartInputAudioInputAudioParam{
-				Data:   output.Data,
-				Format: format,
-			},
-		}
-		return openai.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock}, nil, true
-	default:
-		return openai.ChatCompletionContentPartUnionParam{}, &fantasy.CallWarning{
-			Type:    fantasy.CallWarningTypeOther,
-			Message: fmt.Sprintf("tool result media type %s not supported, sending text placeholder only", output.MediaType),
-		}, false
+	part, warning := chatFileContentPart(filepart.FromToolResult(output), 0)
+	if warning != nil {
+		return openai.ChatCompletionContentPartUnionParam{}, unsupportedToolMediaWarning(output), false
 	}
+	return part, nil, true
 }
 
 // ToolRunBuffer holds synthetic user messages carrying tool-result media back
