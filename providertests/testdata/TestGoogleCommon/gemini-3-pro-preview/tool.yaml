@@ -6,10 +6,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 509
+    content_length: 519
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     headers:
       Content-Type:
       - application/json
@@ -74,10 +74,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 1363
+    content_length: 1373
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence, Italy"},"id":"1wzw08fx","name":"weather"},"thoughtSignature":"EsEDCr4DAb4+9vtz3Lzm1KWmbKIe3x782+ag2WCNmnSLpPZrRIxWHAZV7clKnfj/XCOx3/6hxfzPpeu8fM/k9PMVeCS+qF0rnhNdWxzGshYizYQ1ByccUYKPb92D5ETNs/1zE7HhARHHIlj4y5R+Rci/UOWvfP/Fd64/XhmIrn8SpuZb1tnRMc4o2O+4sxlcVvOIdr3gY5gOK8Y3bB2JpopWAXQX2+CixuAilzLnO5b05TTyaTIUxOEPmvp+AjYFyvVe32jDOsQMFrvFkaWvr6Ii6sKUGmUQ61hYe2j6XhrPT9tVGSDx47Krp9itMZ7jMT+LaCyClUYp7VXeXGVrKwN5/AcOt+4bR74ovt0DZRNIyRF3pZ2xUz7eJnecJYTX/pfrt7I2atVFEg+mgcXxZKeSbsi5XKbCzms0w6TsVG9GNNkqjQmTw0zIpWO5+fIKxhuJx6bGtuZVQTJx5JIa73qKhvhvOz2EMiw4kvuyZSrWd/Z78UB4Kw3C9GFuBpjbBRZMkw0Z18ho+QKNVoLMA962yx/6iHIlR0p0Kbrk58OPmit1NjY/rnb/6HU907ytDP+n4T/FkxIaL6GJWqdGbQSnKdU="}],"role":"model"},{"parts":[{"functionResponse":{"id":"1wzw08fx","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence, Italy"},"id":"1wzw08fx","name":"weather"},"thoughtSignature":"EsEDCr4DAb4+9vtz3Lzm1KWmbKIe3x782+ag2WCNmnSLpPZrRIxWHAZV7clKnfj/XCOx3/6hxfzPpeu8fM/k9PMVeCS+qF0rnhNdWxzGshYizYQ1ByccUYKPb92D5ETNs/1zE7HhARHHIlj4y5R+Rci/UOWvfP/Fd64/XhmIrn8SpuZb1tnRMc4o2O+4sxlcVvOIdr3gY5gOK8Y3bB2JpopWAXQX2+CixuAilzLnO5b05TTyaTIUxOEPmvp+AjYFyvVe32jDOsQMFrvFkaWvr6Ii6sKUGmUQ61hYe2j6XhrPT9tVGSDx47Krp9itMZ7jMT+LaCyClUYp7VXeXGVrKwN5/AcOt+4bR74ovt0DZRNIyRF3pZ2xUz7eJnecJYTX/pfrt7I2atVFEg+mgcXxZKeSbsi5XKbCzms0w6TsVG9GNNkqjQmTw0zIpWO5+fIKxhuJx6bGtuZVQTJx5JIa73qKhvhvOz2EMiw4kvuyZSrWd/Z78UB4Kw3C9GFuBpjbBRZMkw0Z18ho+QKNVoLMA962yx/6iHIlR0p0Kbrk58OPmit1NjY/rnb/6HU907ytDP+n4T/FkxIaL6GJWqdGbQSnKdU="}],"role":"model"},{"parts":[{"functionResponse":{"id":"1wzw08fx","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     headers:
       Content-Type:
       - application/json

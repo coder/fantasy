@@ -6,10 +6,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 509
+    content_length: 519
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     headers:
       Content-Type:
       - application/json
@@ -73,10 +73,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 1580
+    content_length: 1590
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence,Italy"},"id":"1","name":"weather"},"thoughtSignature":"CvAEAb4+9vtxNfQaVSMvYzllmvVB1mXbjZ/qnb4x+ly3Srx40E5gyHmg0LvGfTs6yXFSywSUSD6tcGVUHOKlwVy7iG+xxOL2sBFKa2uPJYvbFIDPEbp+qxwewOczGBAe74tqcbVyy+ulV7vlMeajS1Yu/xDipVuNvKPiLr/bOlNVCtGr2dNccPdCwifE47yKkDwrKVbHjgF/T0b2757DMN7aRp2fsQN5eRCJ8z4P14MoPIsPjvnIInT//t8bz0ZgU36urTFQt9s8sRrIRYOoyh0wfLCMH+5RLoZWVOGvtVG4OasSZmWOix4cSq74VAvhk9TY3XoIDH/CTWn266rR1/OyjDImoAvcGAYF0YGNaEI9TS9OStKLBI+YAZrQC5L884F5+ry3k8xwmx3omToKECwFPx66Tg27fGAIf0T/M0abfKJhCuobRChab4MXZKJbBTfNxPpP/bOB3P7chC/S4uNoIPNU8cQs6zJECujeY5J4eFSwTsMhgOXcWnd9xUNM2zbyiTwPyiVNa8/M3TlvHYc0H32ClWTfTOUFQo2HSLNXXhTI3qZ3/PnZzOIbF2HTSgWqf5jhWDPLp+q1MGBmqBarhwwoie8yl6RKSP1XFJuEgUuW53LnP7esFSGZymfJvLynPnUDUiu3Nyf2W9YwN3FGt7cvMsO3YX34dFwbKr9Wy2ZOM5RNEP/Cf5qzDYvzQnkr4WmAQYQg5Rpt8YVoOuXJDK2z1Qb8MIQfv75RTt4CzkIjrMxIVy1q1L+iUWaSxh/b7HDkh/7CLNF/pvRnB/KjsFU5j2BeXRKF2hIVPRNC8PhnB6rbpDtrEcIrpC9lmIQA"}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence,Italy"},"id":"1","name":"weather"},"thoughtSignature":"CvAEAb4+9vtxNfQaVSMvYzllmvVB1mXbjZ/qnb4x+ly3Srx40E5gyHmg0LvGfTs6yXFSywSUSD6tcGVUHOKlwVy7iG+xxOL2sBFKa2uPJYvbFIDPEbp+qxwewOczGBAe74tqcbVyy+ulV7vlMeajS1Yu/xDipVuNvKPiLr/bOlNVCtGr2dNccPdCwifE47yKkDwrKVbHjgF/T0b2757DMN7aRp2fsQN5eRCJ8z4P14MoPIsPjvnIInT//t8bz0ZgU36urTFQt9s8sRrIRYOoyh0wfLCMH+5RLoZWVOGvtVG4OasSZmWOix4cSq74VAvhk9TY3XoIDH/CTWn266rR1/OyjDImoAvcGAYF0YGNaEI9TS9OStKLBI+YAZrQC5L884F5+ry3k8xwmx3omToKECwFPx66Tg27fGAIf0T/M0abfKJhCuobRChab4MXZKJbBTfNxPpP/bOB3P7chC/S4uNoIPNU8cQs6zJECujeY5J4eFSwTsMhgOXcWnd9xUNM2zbyiTwPyiVNa8/M3TlvHYc0H32ClWTfTOUFQo2HSLNXXhTI3qZ3/PnZzOIbF2HTSgWqf5jhWDPLp+q1MGBmqBarhwwoie8yl6RKSP1XFJuEgUuW53LnP7esFSGZymfJvLynPnUDUiu3Nyf2W9YwN3FGt7cvMsO3YX34dFwbKr9Wy2ZOM5RNEP/Cf5qzDYvzQnkr4WmAQYQg5Rpt8YVoOuXJDK2z1Qb8MIQfv75RTt4CzkIjrMxIVy1q1L+iUWaSxh/b7HDkh/7CLNF/pvRnB/KjsFU5j2BeXRKF2hIVPRNC8PhnB6rbpDtrEcIrpC9lmIQA"}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     headers:
       Content-Type:
       - application/json
