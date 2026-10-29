@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -4637,29 +4638,23 @@ func TestResponsesToPrompt_WebSearchProviderExecutedToolResults(t *testing.T) {
 		},
 	}
 
-	t.Run("store false skips item reference", func(t *testing.T) {
-		t.Parallel()
+	// Without metadata the search cannot be rebuilt, and it is never sent
+	// as an item reference.
+	for _, store := range []bool{false, true} {
+		t.Run(fmt.Sprintf("store=%t", store), func(t *testing.T) {
+			t.Parallel()
 
-		input, warnings := toResponsesPrompt(prompt, "system instructions", false)
+			input, warnings := toResponsesPrompt(prompt, "system instructions", store)
 
-		require.Empty(t, warnings)
-		require.Len(t, input, 2,
-			"expected user + assistant text when store=false")
-		require.Nil(t, input[0].OfItemReference)
-		require.Nil(t, input[1].OfItemReference)
-	})
-
-	t.Run("store true uses item reference", func(t *testing.T) {
-		t.Parallel()
-
-		input, warnings := toResponsesPrompt(prompt, "system instructions", true)
-
-		require.Empty(t, warnings)
-		require.Len(t, input, 3,
-			"expected user + item_reference + assistant text when store=true")
-		require.NotNil(t, input[1].OfItemReference)
-		require.Equal(t, "ws_01", input[1].OfItemReference.ID)
-	})
+			require.Equal(t, []fantasy.CallWarning{{
+				Type:    fantasy.CallWarningTypeOther,
+				Message: `dropping web search "ws_01": it has no web search metadata`,
+			}}, warnings)
+			require.Len(t, input, 2, "expected user + assistant text")
+			require.Nil(t, input[0].OfItemReference)
+			require.Nil(t, input[1].OfItemReference)
+		})
+	}
 }
 
 func TestResponsesToPrompt_ReasoningWithStore(t *testing.T) {
