@@ -683,8 +683,9 @@ func toResponsesPromptWithValidation(prompt fantasy.Prompt, systemMessageMode st
 						input = append(input, item)
 					}
 					// Reasoning that cannot be sent inline is skipped, not
-					// referenced: a reference to an item OpenAI did not store
-					// fails the whole request.
+					// referenced: a reference to an item OpenAI does not hold,
+					// such as one from an unstored response, fails the whole
+					// request.
 					continue
 				case fantasy.ContentTypeToolResult:
 					toolResultPart, ok := fantasy.AsContentType[fantasy.ToolResultPart](c)
