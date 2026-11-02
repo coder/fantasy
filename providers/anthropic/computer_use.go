@@ -122,25 +122,27 @@ func getComputerUseVersion(tool fantasy.ProviderDefinedTool) (ComputerUseToolVer
 
 // ComputerUseToolVersionForModel returns the computer use tool
 // version that the Claude API accepts for modelID. Claude 4.8 and
-// later get the toolset, which Claude 5.5 and later accept
-// exclusively. Opus 4.5 through 4.7 and Sonnet 4.6 get
-// ComputerUse20251124. Sonnet 4.5, Haiku 4.5, and older models get
-// ComputerUse20250124. IDs without a recognizable Claude version
-// (for example claude-mythos-preview or a custom alias) get the
-// toolset, because the newest models accept only it.
+// later and claude-mythos-preview get the toolset, which Claude 5.5
+// and later accept exclusively. Sonnet 4.5, Haiku 4.5, and older
+// models get ComputerUse20250124. Opus 4.5 through 4.7, Sonnet 4.6,
+// and IDs without a recognizable Claude version (for example a custom
+// alias) get ComputerUse20251124.
 //
 // The mapping is for the Claude API. Amazon Bedrock and some other
 // platforms do not offer the toolset.
 func ComputerUseToolVersionForModel(modelID string) ComputerUseToolVersion {
-	major, minor, ok := claudeVersion(modelID)
+	model := strings.ToLower(modelID)
+	major, minor, ok := claudeVersion(model)
 	if !ok {
-		return ComputerUseToolset20260801
+		if strings.Contains(model, "claude-mythos-preview") {
+			return ComputerUseToolset20260801
+		}
+		return ComputerUse20251124
 	}
 	switch {
 	case major > 4 || (major == 4 && minor >= 8):
 		return ComputerUseToolset20260801
 	case major == 4 && minor >= 5:
-		model := strings.ToLower(modelID)
 		if minor == 5 && (strings.Contains(model, "sonnet") || strings.Contains(model, "haiku")) {
 			return ComputerUse20250124
 		}

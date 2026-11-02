@@ -26,7 +26,7 @@ func TestComputerUseToolVersionForModel(t *testing.T) {
 		{"claude-mythos-preview", ComputerUseToolset20260801},
 		{"claude-opus-4-8", ComputerUseToolset20260801},
 		{"anthropic/claude-opus-5-5", ComputerUseToolset20260801},
-		{"my-custom-alias", ComputerUseToolset20260801},
+		{"my-custom-alias", ComputerUse20251124},
 		{"claude-opus-4-7", ComputerUse20251124},
 		{"claude-opus-4-7@20260101", ComputerUse20251124},
 		{"claude-opus-4-6", ComputerUse20251124},
