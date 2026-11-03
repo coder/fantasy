@@ -153,9 +153,6 @@ type ResponsesReasoningMetadata struct {
 	// item. Only finalized encrypted content is replayed inline; streaming
 	// placeholders and metadata persisted before this field existed are not.
 	Finalized bool `json:"finalized,omitempty"`
-	// SourceStoreEnabled records the source request's store setting, so
-	// unstored search items are not referenced after storage is enabled.
-	SourceStoreEnabled bool `json:"source_store_enabled,omitempty"`
 }
 
 // Options implements the ProviderOptions interface.
@@ -467,9 +464,7 @@ type WebSearchAction struct {
 
 // WebSearchCallMetadata stores structured data from a web_search_call
 // output item for round-tripping through multi-turn conversations.
-// The ItemID is used with item_reference for efficient round-tripping
-// when response storage is enabled. When the call cannot be referenced,
-// Status and Action rebuild it inline.
+// Status and Action rebuild the call inline, without its ItemID.
 type WebSearchCallMetadata struct {
 	// ItemID is the server-side ID of the web_search_call output item.
 	ItemID string `json:"item_id"`

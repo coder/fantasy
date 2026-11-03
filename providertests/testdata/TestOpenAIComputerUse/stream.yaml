@@ -56,9 +56,9 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 807
+    content_length: 746
     host: ""
-    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
     headers:
       Accept:
       - application/json
@@ -106,9 +106,9 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 1237
+    content_length: 1115
     host: ""
-    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"id":"cu_0eb8ac26cb4f56510169ef4799b5a881908e6ef489cf012639","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"id":"cu_0eb8ac26cb4f56510169ef479bd778819085591adaa9dd71ec","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_dEpju2GfsoaXrpZaXb88neoE"},{"call_id":"call_dEpju2GfsoaXrpZaXb88neoE","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
+    body: '{"max_output_tokens":4000,"store":false,"input":[{"content":"You are a helpful assistant that can control a computer. Take a screenshot when asked.","role":"developer"},{"content":[{"text":"Take a screenshot of the desktop","type":"input_text"}],"role":"user"},{"type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E"},{"call_id":"call_AwjX3CUm1eKMBmcCFSxg5O7E","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"},{"type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_dEpju2GfsoaXrpZaXb88neoE"},{"call_id":"call_dEpju2GfsoaXrpZaXb88neoE","output":{"image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==","type":"computer_screenshot"},"type":"computer_call_output"}],"model":"gpt-5.4","reasoning":{"effort":"medium"},"tool_choice":"auto","tools":[{"type":"computer"}],"stream":true}'
     headers:
       Accept:
       - application/json
