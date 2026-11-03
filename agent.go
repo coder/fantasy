@@ -844,6 +844,7 @@ func (a *agent) executeSingleTool(ctx context.Context, toolMap map[string]AgentT
 			Data:      base64.StdEncoding.EncodeToString(toolResult.Data),
 			MediaType: toolResult.MediaType,
 			Text:      toolResult.Content,
+			Filename:  toolResult.Filename,
 		}
 	default:
 		result.Result = ToolResultOutputContentText{Text: toolResult.Content}
