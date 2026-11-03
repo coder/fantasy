@@ -1,7 +1,6 @@
 package openaicompat
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -284,90 +283,12 @@ func ToPromptFunc(prompt fantasy.Prompt, _, _ string) ([]openaisdk.ChatCompletio
 						continue
 					}
 
-					switch {
-					case strings.HasPrefix(filePart.MediaType, "text/"):
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						documentBlock := openaisdk.ChatCompletionContentPartFileFileParam{
-							FileData: param.NewOpt(base64Encoded),
-						}
-						content = append(content, openaisdk.FileContentPart(documentBlock))
-
-					case strings.HasPrefix(filePart.MediaType, "image/"):
-						// Handle image files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						data := "data:" + filePart.MediaType + ";base64," + base64Encoded
-						imageURL := openaisdk.ChatCompletionContentPartImageImageURLParam{URL: data}
-
-						// Check for provider-specific options like image detail
-						if providerOptions, ok := filePart.ProviderOptions[openai.Name]; ok {
-							if detail, ok := providerOptions.(*openai.ProviderFileOptions); ok {
-								imageURL.Detail = detail.ImageDetail
-							}
-						}
-
-						imageBlock := openaisdk.ChatCompletionContentPartImageParam{ImageURL: imageURL}
-						content = append(content, openaisdk.ChatCompletionContentPartUnionParam{OfImageURL: &imageBlock})
-
-					case filePart.MediaType == "audio/wav":
-						// Handle WAV audio files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						audioBlock := openaisdk.ChatCompletionContentPartInputAudioParam{
-							InputAudio: openaisdk.ChatCompletionContentPartInputAudioInputAudioParam{
-								Data:   base64Encoded,
-								Format: "wav",
-							},
-						}
-						content = append(content, openaisdk.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock})
-
-					case filePart.MediaType == "audio/mpeg" || filePart.MediaType == "audio/mp3":
-						// Handle MP3 audio files
-						base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-						audioBlock := openaisdk.ChatCompletionContentPartInputAudioParam{
-							InputAudio: openaisdk.ChatCompletionContentPartInputAudioInputAudioParam{
-								Data:   base64Encoded,
-								Format: "mp3",
-							},
-						}
-						content = append(content, openaisdk.ChatCompletionContentPartUnionParam{OfInputAudio: &audioBlock})
-
-					case filePart.MediaType == "application/pdf":
-						// Handle PDF files
-						dataStr := string(filePart.Data)
-
-						// Check if data looks like a file ID (starts with "file-")
-						if strings.HasPrefix(dataStr, "file-") {
-							fileBlock := openaisdk.ChatCompletionContentPartFileParam{
-								File: openaisdk.ChatCompletionContentPartFileFileParam{
-									FileID: param.NewOpt(dataStr),
-								},
-							}
-							content = append(content, openaisdk.ChatCompletionContentPartUnionParam{OfFile: &fileBlock})
-						} else {
-							// Handle as base64 data
-							base64Encoded := base64.StdEncoding.EncodeToString(filePart.Data)
-							data := "data:application/pdf;base64," + base64Encoded
-
-							filename := filePart.Filename
-							if filename == "" {
-								// Generate default filename based on content index
-								filename = fmt.Sprintf("part-%d.pdf", len(content))
-							}
-
-							fileBlock := openaisdk.ChatCompletionContentPartFileParam{
-								File: openaisdk.ChatCompletionContentPartFileFileParam{
-									Filename: param.NewOpt(filename),
-									FileData: param.NewOpt(data),
-								},
-							}
-							content = append(content, openaisdk.ChatCompletionContentPartUnionParam{OfFile: &fileBlock})
-						}
-
-					default:
-						warnings = append(warnings, fantasy.CallWarning{
-							Type:    fantasy.CallWarningTypeOther,
-							Message: fmt.Sprintf("file part media type %s not supported", filePart.MediaType),
-						})
+					part, warning := openai.FilePartToChatContentPart(filePart, len(content))
+					if warning != nil {
+						warnings = append(warnings, *warning)
+						continue
 					}
+					content = append(content, part)
 				}
 			}
 			if !openai.HasVisibleUserContent(content) {
