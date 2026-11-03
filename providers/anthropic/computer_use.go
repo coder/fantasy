@@ -128,8 +128,9 @@ func getComputerUseVersion(tool fantasy.ProviderDefinedTool) (ComputerUseToolVer
 // and IDs without a recognizable Claude version (for example a custom
 // alias) get ComputerUse20251124.
 //
-// The mapping is for the Claude API. Amazon Bedrock and some other
-// platforms do not offer the toolset.
+// Claude Platform on AWS accepts the same versions, and Amazon
+// Bedrock accepts the toolset for Claude 5.5, although Anthropic's
+// docs say that neither offers the toolset.
 func ComputerUseToolVersionForModel(modelID string) ComputerUseToolVersion {
 	model := strings.ToLower(modelID)
 	major, minor, ok := claudeVersion(model)
