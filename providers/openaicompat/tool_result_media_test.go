@@ -57,8 +57,8 @@ func TestToPromptFunc_MediaToolResult_ImagePNG(t *testing.T) {
 
 	userMsg := messages[2].OfUser
 	require.NotNil(t, userMsg)
-	require.Len(t, userMsg.Content.OfArrayOfContentParts, 1)
-	imagePart := userMsg.Content.OfArrayOfContentParts[0].OfImageURL
+	require.Len(t, userMsg.Content.OfArrayOfContentParts, 2)
+	imagePart := userMsg.Content.OfArrayOfContentParts[1].OfImageURL
 	require.NotNil(t, imagePart)
 	require.Equal(t, "data:image/png;base64,"+imageData, imagePart.ImageURL.URL)
 }
@@ -128,8 +128,8 @@ func TestToPromptFunc_MediaToolResult_AudioWAV(t *testing.T) {
 	require.NotNil(t, messages[1].OfTool)
 	userMsg := messages[2].OfUser
 	require.NotNil(t, userMsg)
-	require.Len(t, userMsg.Content.OfArrayOfContentParts, 1)
-	audioPart := userMsg.Content.OfArrayOfContentParts[0].OfInputAudio
+	require.Len(t, userMsg.Content.OfArrayOfContentParts, 2)
+	audioPart := userMsg.Content.OfArrayOfContentParts[1].OfInputAudio
 	require.NotNil(t, audioPart)
 	require.Equal(t, audio, audioPart.InputAudio.Data)
 	require.Equal(t, "wav", audioPart.InputAudio.Format)
@@ -167,8 +167,8 @@ func TestToPromptFunc_MediaToolResult_AudioMP3(t *testing.T) {
 	require.NotNil(t, messages[1].OfTool)
 	userMsg := messages[2].OfUser
 	require.NotNil(t, userMsg)
-	require.Len(t, userMsg.Content.OfArrayOfContentParts, 1)
-	audioPart := userMsg.Content.OfArrayOfContentParts[0].OfInputAudio
+	require.Len(t, userMsg.Content.OfArrayOfContentParts, 2)
+	audioPart := userMsg.Content.OfArrayOfContentParts[1].OfInputAudio
 	require.NotNil(t, audioPart)
 	require.Equal(t, audio, audioPart.InputAudio.Data)
 	require.Equal(t, "mp3", audioPart.InputAudio.Format)

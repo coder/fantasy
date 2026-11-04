@@ -42,10 +42,12 @@ func TestToolMediaFollowsToolResultBatch(t *testing.T) {
 						fantasy.ToolResultPart{ToolCallID: "call-b", Output: fantasy.ToolResultOutputContentText{Text: "second result"}},
 					}
 					imageURLs := []string{"data:image/png;base64,AAEC"}
+					mediaCallIDs := []string{"call-a"}
 					if tc.secondMedia {
 						media.Data, media.Text = "AwQF", "second result"
 						results[1] = fantasy.ToolResultPart{ToolCallID: "call-b", Output: media}
 						imageURLs = append(imageURLs, "data:image/png;base64,AwQF")
+						mediaCallIDs = append(mediaCallIDs, "call-b")
 					}
 					prompt := fantasy.Prompt{{
 						Role: fantasy.MessageRoleAssistant,
@@ -86,8 +88,11 @@ func TestToolMediaFollowsToolResultBatch(t *testing.T) {
 					for i, url := range imageURLs {
 						user := messages[3+i].OfUser
 						require.NotNil(t, user)
-						require.Len(t, user.Content.OfArrayOfContentParts, 1)
-						image := user.Content.OfArrayOfContentParts[0].OfImageURL
+						require.Len(t, user.Content.OfArrayOfContentParts, 2)
+						label := user.Content.OfArrayOfContentParts[0].OfText
+						require.NotNil(t, label)
+						require.Contains(t, label.Text, mediaCallIDs[i], "each media label must name its own tool call")
+						image := user.Content.OfArrayOfContentParts[1].OfImageURL
 						require.NotNil(t, image)
 						require.Equal(t, url, image.ImageURL.URL)
 					}

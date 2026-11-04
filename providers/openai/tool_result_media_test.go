@@ -54,8 +54,8 @@ func TestDefaultToPrompt_MediaToolResult_ImagePNG(t *testing.T) {
 
 	userMsg := messages[2].OfUser
 	require.NotNil(t, userMsg)
-	require.Len(t, userMsg.Content.OfArrayOfContentParts, 1)
-	imagePart := userMsg.Content.OfArrayOfContentParts[0].OfImageURL
+	require.Len(t, userMsg.Content.OfArrayOfContentParts, 2)
+	imagePart := userMsg.Content.OfArrayOfContentParts[1].OfImageURL
 	require.NotNil(t, imagePart)
 	require.Equal(t, "data:image/png;base64,"+imageData, imagePart.ImageURL.URL)
 }
@@ -125,8 +125,8 @@ func TestDefaultToPrompt_MediaToolResult_AudioWAV(t *testing.T) {
 	require.NotNil(t, messages[1].OfTool)
 	userMsg := messages[2].OfUser
 	require.NotNil(t, userMsg)
-	require.Len(t, userMsg.Content.OfArrayOfContentParts, 1)
-	audioPart := userMsg.Content.OfArrayOfContentParts[0].OfInputAudio
+	require.Len(t, userMsg.Content.OfArrayOfContentParts, 2)
+	audioPart := userMsg.Content.OfArrayOfContentParts[1].OfInputAudio
 	require.NotNil(t, audioPart)
 	require.Equal(t, audio, audioPart.InputAudio.Data)
 	require.Equal(t, "wav", audioPart.InputAudio.Format)
@@ -216,9 +216,9 @@ func TestDefaultToPrompt_MediaToolResult_ParallelBatchDeferred(t *testing.T) {
 	require.NotNil(t, messages[2].OfTool)
 	require.Equal(t, "img-2", messages[2].OfTool.ToolCallID)
 	require.NotNil(t, messages[3].OfUser)
-	require.NotNil(t, messages[3].OfUser.Content.OfArrayOfContentParts[0].OfImageURL)
+	require.NotNil(t, messages[3].OfUser.Content.OfArrayOfContentParts[1].OfImageURL)
 	require.NotNil(t, messages[4].OfUser)
-	require.NotNil(t, messages[4].OfUser.Content.OfArrayOfContentParts[0].OfImageURL)
+	require.NotNil(t, messages[4].OfUser.Content.OfArrayOfContentParts[1].OfImageURL)
 	require.NotNil(t, messages[5].OfUser)
 }
 
@@ -243,7 +243,7 @@ func TestDefaultToPrompt_MediaToolResult_DeferredFlushAtEnd(t *testing.T) {
 	require.Len(t, messages, 3)
 	require.NotNil(t, messages[1].OfTool)
 	require.NotNil(t, messages[2].OfUser)
-	require.NotNil(t, messages[2].OfUser.Content.OfArrayOfContentParts[0].OfImageURL)
+	require.NotNil(t, messages[2].OfUser.Content.OfArrayOfContentParts[1].OfImageURL)
 }
 
 // Only the media user messages are deferred. A text tool result later in the
@@ -275,7 +275,7 @@ func TestDefaultToPrompt_MediaToolResult_MixedBatchKeepsTextInline(t *testing.T)
 	require.NotNil(t, messages[2].OfTool)
 	require.Equal(t, "txt-1", messages[2].OfTool.ToolCallID)
 	require.NotNil(t, messages[3].OfUser)
-	require.NotNil(t, messages[3].OfUser.Content.OfArrayOfContentParts[0].OfImageURL)
+	require.NotNil(t, messages[3].OfUser.Content.OfArrayOfContentParts[1].OfImageURL)
 	require.NotNil(t, messages[4].OfUser)
 }
 
@@ -300,7 +300,7 @@ func TestDefaultToPrompt_MediaToolResult_DeferredBeforeAssistant(t *testing.T) {
 	require.Len(t, messages, 4)
 	require.NotNil(t, messages[1].OfTool)
 	require.NotNil(t, messages[2].OfUser)
-	require.NotNil(t, messages[2].OfUser.Content.OfArrayOfContentParts[0].OfImageURL)
+	require.NotNil(t, messages[2].OfUser.Content.OfArrayOfContentParts[1].OfImageURL)
 	require.NotNil(t, messages[3].OfAssistant)
 }
 
