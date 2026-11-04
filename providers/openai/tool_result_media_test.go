@@ -375,7 +375,7 @@ func TestToResponsesPrompt_MediaToolResult_PDFInParallelBatch(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 	// Two function calls + two function_call_outputs, and no user message.
