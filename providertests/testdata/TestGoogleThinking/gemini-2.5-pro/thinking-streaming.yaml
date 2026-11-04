@@ -6,10 +6,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 550
+    content_length: 560
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence, Italy?"}],"role":"user"}],"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":128}},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence, Italy?"}],"role":"user"}],"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":128}},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     form:
       alt:
       - sse
@@ -38,10 +38,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 1310
+    content_length: 1320
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence, Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence, Italy"},"id":"1","name":"weather"},"thoughtSignature":"CiIBvj72+9zt1F5hZ22f1eeW7Px6AYZtmGWkRn98itxeN1glCmcBvj72+7MEN/axOHSjBzj3ketZPeDZru98pfgPDRSPRire30CemwwkjWoP6Ejv0DwglpMfSVw6C7oT2xm+otusdJ8QznRot3m3zOup17INxBbQkFPAvf9kXN5U7uLCkLPNgeOfCpbJCoYBAb4+9vu+PT2opK2A1Ko4kOZ1ONsRdpEf9pvK8PCiCjiQQjIz/w5NxwrwByC/4dJtsCXdQ3lPKA4fgJjfai0O6+SP6iU4x+outZLLTY0Jxc3awfwSv9HKLN/poOW0njQMZUiMuW49hYgIMNyLfvqhHQwn4+8Xs8yoEN5yBHfJoVeHFqz5z3oKcAG+Pvb7afI/08/QqVFDQHAt7cDrXu14mBkRMbe4hqYevsbRiIOtJeK3RZVsNQHcs0WgA1zKEytXe2Pg5cEjMyRl98DeLSilEVN4ZEAkjx5jcyx3FuuUY73PQ8BYJdoU2QKr9koDZMAnZCPv21/iJpQ="}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":128}},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence, Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence, Italy"},"id":"1","name":"weather"},"thoughtSignature":"CiIBvj72+9zt1F5hZ22f1eeW7Px6AYZtmGWkRn98itxeN1glCmcBvj72+7MEN/axOHSjBzj3ketZPeDZru98pfgPDRSPRire30CemwwkjWoP6Ejv0DwglpMfSVw6C7oT2xm+otusdJ8QznRot3m3zOup17INxBbQkFPAvf9kXN5U7uLCkLPNgeOfCpbJCoYBAb4+9vu+PT2opK2A1Ko4kOZ1ONsRdpEf9pvK8PCiCjiQQjIz/w5NxwrwByC/4dJtsCXdQ3lPKA4fgJjfai0O6+SP6iU4x+outZLLTY0Jxc3awfwSv9HKLN/poOW0njQMZUiMuW49hYgIMNyLfvqhHQwn4+8Xs8yoEN5yBHfJoVeHFqz5z3oKcAG+Pvb7afI/08/QqVFDQHAt7cDrXu14mBkRMbe4hqYevsbRiIOtJeK3RZVsNQHcs0WgA1zKEytXe2Pg5cEjMyRl98DeLSilEVN4ZEAkjx5jcyx3FuuUY73PQ8BYJdoU2QKr9koDZMAnZCPv21/iJpQ="}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingBudget":128}},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     form:
       alt:
       - sse

@@ -6,10 +6,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 509
+    content_length: 519
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     form:
       alt:
       - sse
@@ -38,10 +38,10 @@ interactions:
     proto: HTTP/1.1
     proto_major: 1
     proto_minor: 1
-    content_length: 1144
+    content_length: 1154
     host: generativelanguage.googleapis.com
     body: |
-      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence,Italy"},"id":"1","name":"weather"},"thoughtSignature":"CiQBvj72+xCKZ6n2ewHIHg3nIWfu6zy4Znh/TJTlgZMDBj7UcfoKZwG+Pvb7HC0+ds8yTx13X71T68CdLhgHBq/EHSe1cdetUYt/hbcv5aJy5o7Bhux5fWqkmSsGNBs9HiMdsbRqRN4YXh9UR3LTnYuV7Bp0gR8nIE/QLK2BQtGNxrxaD8scXwvrZ2q3izMKmgEBvj72++/EmTKY6Vq77EISxk0GbpbjN6ypU29fapjcLCRtNSNfgpdcqgMgWIGqH6E9d20r2UYGXgyGsx5cdtWBvI0q5dQwy2xATovEZNRPNJC/+vY0yBsTojt61TKhp26PJ5fIdu02X8RN89S15Xr3egRayx72aPeUzfheqRxqGWjiMcbK4EWyiX+UxHHFqKTppeSRhBjtMdse"}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parameters":{"properties":{"location":{"description":"the city","type":"STRING"}},"required":["location"],"type":"OBJECT"}}]}]}
+      {"contents":[{"parts":[{"text":"What's the weather in Florence,Italy?"}],"role":"user"},{"parts":[{"functionCall":{"args":{"location":"Florence,Italy"},"id":"1","name":"weather"},"thoughtSignature":"CiQBvj72+xCKZ6n2ewHIHg3nIWfu6zy4Znh/TJTlgZMDBj7UcfoKZwG+Pvb7HC0+ds8yTx13X71T68CdLhgHBq/EHSe1cdetUYt/hbcv5aJy5o7Bhux5fWqkmSsGNBs9HiMdsbRqRN4YXh9UR3LTnYuV7Bp0gR8nIE/QLK2BQtGNxrxaD8scXwvrZ2q3izMKmgEBvj72++/EmTKY6Vq77EISxk0GbpbjN6ypU29fapjcLCRtNSNfgpdcqgMgWIGqH6E9d20r2UYGXgyGsx5cdtWBvI0q5dQwy2xATovEZNRPNJC/+vY0yBsTojt61TKhp26PJ5fIdu02X8RN89S15Xr3egRayx72aPeUzfheqRxqGWjiMcbK4EWyiX+UxHHFqKTppeSRhBjtMdse"}],"role":"model"},{"parts":[{"functionResponse":{"id":"1","name":"weather","response":{"result":"40 C"}}}],"role":"user"}],"generationConfig":{"maxOutputTokens":4000},"systemInstruction":{"parts":[{"text":"You are a helpful assistant"}],"role":"user"},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"tools":[{"functionDeclarations":[{"description":"Get weather information for a location","name":"weather","parametersJsonSchema":{"properties":{"location":{"description":"the city","type":"string"}},"required":["location"],"type":"object"}}]}]}
     form:
       alt:
       - sse
