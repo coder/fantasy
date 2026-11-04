@@ -459,10 +459,10 @@ func withoutItemID(meta *WebSearchCallMetadata) *WebSearchCallMetadata {
 	return &copied
 }
 
-func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, want string) []fantasy.CallWarning {
+func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, want string) []fantasy.CallWarning {
 	t.Helper()
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", store)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 	encoded, err := json.Marshal(input)
 	require.NoError(t, err)
@@ -470,7 +470,7 @@ func requireResponsesInputJSON(t *testing.T, prompt fantasy.Prompt, store bool, 
 	return warnings
 }
 
-func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
+func TestResponsesToPrompt_WebSearchCallAction(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range webSearchCallActionCases {
@@ -484,7 +484,7 @@ func TestResponsesToPrompt_UnstoredWebSearchCallAction(t *testing.T) {
 					fantasy.TextPart{Text: "Answer."},
 				)},
 			}
-			warnings := requireResponsesInputJSON(t, prompt, false, `[`+
+			warnings := requireResponsesInputJSON(t, prompt, `[`+
 				`{"role":"user","content":[{"type":"input_text","text":"Search."}]},`+
 				tc.wantInline+`,`+
 				`{"role":"assistant","content":"Answer."}]`)
@@ -537,7 +537,6 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		store        bool
 		content      []fantasy.MessagePart
 		laterContent []fantasy.MessagePart
 		// toolContentBefore and toolContentAfter are tool messages before
@@ -548,19 +547,12 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		wantWarning       string
 	}{
 		{
-			name:    "UnstoredInterleavedWithReasoning",
+			name:    "InterleavedWithReasoning",
 			content: interleaved,
 			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
 		},
 		{
-			// A stored search is sent inline too, never referenced.
-			name:    "StoredInterleavedWithReasoning",
-			store:   true,
-			content: interleaved,
-			want:    `[` + userJSON + `,` + searchJSON + `,` + reasoningJSON + `,` + openPageJSON + `,` + answerJSON + `]`,
-		},
-		{
-			name: "UnstoredRepeatedParts",
+			name: "RepeatedParts",
 			content: slices.Concat(
 				webSearchCallParts("ws_01", search),
 				webSearchCallParts("ws_01", search),
@@ -568,7 +560,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name: "UnstoredWithoutIDs",
+			name: "WithoutIDs",
 			content: []fantasy.MessagePart{
 				webSearchCallParts("", withoutItemID(search))[1],
 				webSearchCallParts("", withoutItemID(openPage))[1],
@@ -577,7 +569,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		},
 		{
 			// Without a call ID, the metadata's item ID identifies the search.
-			name: "UnstoredRepeatedResultWithoutCallID",
+			name: "RepeatedResultWithoutCallID",
 			content: []fantasy.MessagePart{
 				webSearchCallParts("", search)[1],
 				webSearchCallParts("", search)[1],
@@ -587,18 +579,18 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		{
 			// No warning: the assistant message after the tool message
 			// replays the search.
-			name:              "UnstoredResultInEarlierToolMessage",
+			name:              "ResultInEarlierToolMessage",
 			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
 			content:           []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1], answer},
 			want:              `[` + userJSON + `,` + searchJSON + `,` + answerJSON + `]`,
 		},
 		{
-			name:    "UnstoredSearchOnly",
+			name:    "SearchOnly",
 			content: webSearchCallParts("ws_01", search),
 			want:    `[` + userJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name: "UnstoredPre62SearchWithoutStatus",
+			name: "LegacySearchWithoutStatus",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",
@@ -611,7 +603,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		{
 			// Before #62 only Type and Query were saved. The API accepts a
 			// find_in_page action without url and pattern.
-			name: "UnstoredPre62FindInPageWithoutStatus",
+			name: "LegacyFindInPageWithoutStatus",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",
@@ -622,7 +614,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want: `[` + userJSON + `,{"type":"web_search_call","action":{"type":"find_in_page"}},` + answerJSON + `]`,
 		},
 		{
-			name: "UnstoredWithoutAction",
+			name: "WithoutAction",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: "completed"}),
 				answer,
@@ -631,7 +623,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			wantWarning: `dropping web search "ws_01": metadata has no action`,
 		},
 		{
-			name:        "UnstoredWithoutMetadata",
+			name:        "WithoutMetadata",
 			content:     append(webSearchCallParts("ws_01", nil), answer),
 			want:        `[` + userJSON + `,` + answerJSON + `]`,
 			wantWarning: `dropping web search "ws_01": it has no web search metadata`,
@@ -639,7 +631,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		{
 			// A part that can't replay a search doesn't warn when another
 			// part replays it.
-			name: "UnstoredUnreplayableThenReplayable",
+			name: "UnreplayableThenReplayable",
 			content: []fantasy.MessagePart{
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{ItemID: "ws_01", Status: "completed"})[1],
 				answer,
@@ -648,7 +640,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			want:         `[` + userJSON + `,` + answerJSON + `,` + searchJSON + `]`,
 		},
 		{
-			name: "UnstoredRepeatedWithoutMetadata",
+			name: "RepeatedWithoutMetadata",
 			content: []fantasy.MessagePart{
 				webSearchCallParts("ws_01", nil)[1],
 				webSearchCallParts("ws_01", nil)[1],
@@ -658,7 +650,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			wantWarning: `dropping web search "ws_01": it has no web search metadata`,
 		},
 		{
-			name:              "UnstoredRepeatedInToolMessages",
+			name:              "RepeatedInToolMessages",
 			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
 			content:           []fantasy.MessagePart{answer},
 			toolContentAfter:  []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
@@ -667,14 +659,14 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 		},
 		{
 			// The assistant message's reason wins over the tool message's.
-			name:              "UnstoredWithoutMetadataAlsoInToolMessage",
+			name:              "WithoutMetadataAlsoInToolMessage",
 			toolContentBefore: []fantasy.MessagePart{webSearchCallParts("ws_01", search)[1]},
 			content:           []fantasy.MessagePart{webSearchCallParts("ws_01", nil)[1], answer},
 			want:              `[` + userJSON + `,` + answerJSON + `]`,
 			wantWarning:       `dropping web search "ws_01": it has no web search metadata`,
 		},
 		{
-			name: "UnstoredUnknownActionType",
+			name: "UnknownActionType",
 			content: append(
 				webSearchCallParts("ws_01", &WebSearchCallMetadata{
 					ItemID: "ws_01",
@@ -702,7 +694,7 @@ func TestResponsesToPrompt_WebSearchCallReplay(t *testing.T) {
 			if tc.toolContentAfter != nil {
 				prompt = append(prompt, fantasy.Message{Role: fantasy.MessageRoleTool, Content: tc.toolContentAfter})
 			}
-			warnings := requireResponsesInputJSON(t, prompt, tc.store, tc.want)
+			warnings := requireResponsesInputJSON(t, prompt, tc.want)
 			var messages []string
 			for _, warning := range warnings {
 				messages = append(messages, warning.Message)
