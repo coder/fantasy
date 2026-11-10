@@ -329,7 +329,7 @@ func TestToResponsesPrompt_MediaToolResult_ImagePNG(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 	// Assistant function call + function_call_output that holds the image.
@@ -375,7 +375,7 @@ func TestToResponsesPrompt_MediaToolResult_PDFInParallelBatch(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 	// Two function calls + two function_call_outputs, and no user message.
@@ -415,7 +415,7 @@ func TestToResponsesPrompt_MediaToolResult_UnsupportedMediaType(t *testing.T) {
 		},
 	}
 
-	input, warnings, err := toResponsesPrompt(prompt, "system", false)
+	input, warnings, err := toResponsesPrompt(prompt, "system")
 	require.NoError(t, err)
 
 	// Assistant function call + text function_call_output.
