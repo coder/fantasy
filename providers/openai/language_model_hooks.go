@@ -44,14 +44,10 @@ type LanguageModelToPromptFunc = func(prompt fantasy.Prompt, provider, model str
 
 // DefaultPrepareCallFunc is the default implementation for preparing a call to the language model.
 func DefaultPrepareCallFunc(model fantasy.LanguageModel, params *openai.ChatCompletionNewParams, call fantasy.Call) ([]fantasy.CallWarning, error) {
-	// OpenAI and Azure OpenAI deprecate max_tokens for every chat model and
-	// reject it for reasoning models, which a model ID such as an Azure
-	// deployment name cannot reveal. OpenAI-compatible providers replace this
-	// function, so they keep max_tokens.
+	// OpenAI deprecates max_tokens and rejects it for reasoning models, which
+	// an Azure deployment name cannot reveal. Compatible providers keep it.
 	if params.MaxTokens.Valid() {
-		if !params.MaxCompletionTokens.Valid() {
-			params.MaxCompletionTokens = params.MaxTokens
-		}
+		params.MaxCompletionTokens = params.MaxTokens
 		params.MaxTokens = param.Opt[int64]{}
 	}
 	if call.ProviderOptions == nil {
