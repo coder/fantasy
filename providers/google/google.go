@@ -1238,24 +1238,17 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 				continue
 			}
 
-			var required []string
-			var properties map[string]any
-			if props, ok := ft.InputSchema["properties"]; ok {
-				properties, _ = props.(map[string]any)
-			}
-			if req, ok := ft.InputSchema["required"]; ok {
-				if reqArr, ok := req.([]string); ok {
-					required = reqArr
-				}
-			}
 			declaration := &genai.FunctionDeclaration{
 				Name:        ft.Name,
 				Description: ft.Description,
-				Parameters: &genai.Schema{
-					Type:       genai.TypeObject,
-					Properties: convertSchemaProperties(properties),
-					Required:   required,
-				},
+			}
+			// ParametersJsonSchema takes JSON Schema as is. The
+			// OpenAPI-style Parameters field cannot express keywords such
+			// as "$ref" and "$defs", so converting into it loses or
+			// corrupts tool arguments. A nil map inside the interface
+			// would serialize as null, so leave the field unset instead.
+			if ft.InputSchema != nil {
+				declaration.ParametersJsonSchema = ft.InputSchema
 			}
 			googleTools = append(googleTools, declaration)
 			continue
@@ -1300,80 +1293,6 @@ func toGoogleTools(tools []fantasy.Tool, toolChoice *fantasy.ToolChoice) (google
 		}
 	}
 	return googleTools, googleToolChoice, warnings
-}
-
-func convertSchemaProperties(parameters map[string]any) map[string]*genai.Schema {
-	properties := make(map[string]*genai.Schema)
-
-	for name, param := range parameters {
-		properties[name] = convertToSchema(param)
-	}
-
-	return properties
-}
-
-func convertToSchema(param any) *genai.Schema {
-	schema := &genai.Schema{Type: genai.TypeString}
-
-	paramMap, ok := param.(map[string]any)
-	if !ok {
-		return schema
-	}
-
-	if desc, ok := paramMap["description"].(string); ok {
-		schema.Description = desc
-	}
-
-	typeVal, hasType := paramMap["type"]
-	if !hasType {
-		return schema
-	}
-
-	typeStr, ok := typeVal.(string)
-	if !ok {
-		return schema
-	}
-
-	schema.Type = mapJSONTypeToGoogle(typeStr)
-
-	switch typeStr {
-	case "array":
-		schema.Items = processArrayItems(paramMap)
-	case "object":
-		if props, ok := paramMap["properties"].(map[string]any); ok {
-			schema.Properties = convertSchemaProperties(props)
-		}
-	}
-
-	return schema
-}
-
-func processArrayItems(paramMap map[string]any) *genai.Schema {
-	items, ok := paramMap["items"].(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	return convertToSchema(items)
-}
-
-func mapJSONTypeToGoogle(jsonType string) genai.Type {
-	switch jsonType {
-	case "string":
-		return genai.TypeString
-	case "number":
-		return genai.TypeNumber
-	case "integer":
-		return genai.TypeInteger
-	case "boolean":
-		return genai.TypeBoolean
-	case "array":
-		return genai.TypeArray
-	case "object":
-		return genai.TypeObject
-	default:
-		return genai.TypeString // Default to string for unknown types
-	}
 }
 
 func (g languageModel) mapResponse(response *genai.GenerateContentResponse, warnings []fantasy.CallWarning) (*fantasy.Response, error) {
