@@ -8,7 +8,7 @@ interactions:
     proto_minor: 1
     content_length: 215
     host: ""
-    body: '{"messages":[{"content":"You are a helpful assistant","role":"system"},{"content":"Say hi in Portuguese","role":"user"}],"model":"gpt-4o-mini","max_tokens":4000,"stream_options":{"include_usage":true},"stream":true}'
+    body: '{"messages":[{"content":"You are a helpful assistant","role":"system"},{"content":"Say hi in Portuguese","role":"user"}],"model":"gpt-4o-mini","max_completion_tokens":4000,"stream_options":{"include_usage":true},"stream":true}'
     headers:
       Accept:
       - application/json

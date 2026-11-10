@@ -61,11 +61,11 @@ func TestPrepareParams_ChatReasoningModelOverride(t *testing.T) {
 			})
 			require.NoError(t, err)
 
+			require.False(t, params.MaxTokens.Valid())
+			require.True(t, params.MaxCompletionTokens.Valid())
+			require.Equal(t, int64(512), params.MaxCompletionTokens.Value)
 			if tt.wantReasoning {
 				require.False(t, params.Temperature.Valid())
-				require.False(t, params.MaxTokens.Valid())
-				require.True(t, params.MaxCompletionTokens.Valid())
-				require.Equal(t, int64(512), params.MaxCompletionTokens.Value)
 				require.False(t, params.Logprobs.Valid())
 				var unsupported []string
 				for _, warning := range warnings {
@@ -76,9 +76,6 @@ func TestPrepareParams_ChatReasoningModelOverride(t *testing.T) {
 			} else {
 				require.True(t, params.Temperature.Valid())
 				require.Equal(t, 0.7, params.Temperature.Value)
-				require.True(t, params.MaxTokens.Valid())
-				require.Equal(t, int64(512), params.MaxTokens.Value)
-				require.False(t, params.MaxCompletionTokens.Valid())
 				require.True(t, params.Logprobs.Valid())
 				require.True(t, params.Logprobs.Value)
 				require.Empty(t, warnings)

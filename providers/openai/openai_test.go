@@ -1652,6 +1652,65 @@ func TestDoGenerate(t *testing.T) {
 		require.Equal(t, "Hello", message["content"])
 	})
 
+	t.Run("should convert maxOutputTokens to max_completion_tokens for non-reasoning models", func(t *testing.T) {
+		t.Parallel()
+
+		server := newMockServer()
+		defer server.close()
+
+		server.prepareJSONResponse(map[string]any{})
+
+		provider, err := New(
+			WithAPIKey("test-api-key"),
+			WithBaseURL(server.server.URL),
+		)
+		require.NoError(t, err)
+		model, _ := provider.LanguageModel(t.Context(), "gpt-4o")
+
+		_, err = model.Generate(context.Background(), fantasy.Call{
+			Prompt:          testPrompt,
+			MaxOutputTokens: new(int64(1000)),
+		})
+
+		require.NoError(t, err)
+		require.Len(t, server.calls, 1)
+
+		call := server.calls[0]
+		require.Equal(t, float64(1000), call.body["max_completion_tokens"])
+		require.Nil(t, call.body["max_tokens"])
+	})
+
+	t.Run("should prefer the max_completion_tokens setting over maxOutputTokens", func(t *testing.T) {
+		t.Parallel()
+
+		server := newMockServer()
+		defer server.close()
+
+		server.prepareJSONResponse(map[string]any{})
+
+		provider, err := New(
+			WithAPIKey("test-api-key"),
+			WithBaseURL(server.server.URL),
+		)
+		require.NoError(t, err)
+		model, _ := provider.LanguageModel(t.Context(), "gpt-4o")
+
+		_, err = model.Generate(context.Background(), fantasy.Call{
+			Prompt:          testPrompt,
+			MaxOutputTokens: new(int64(1000)),
+			ProviderOptions: NewProviderOptions(&ProviderOptions{
+				MaxCompletionTokens: new(int64(255)),
+			}),
+		})
+
+		require.NoError(t, err)
+		require.Len(t, server.calls, 1)
+
+		call := server.calls[0]
+		require.Equal(t, float64(255), call.body["max_completion_tokens"])
+		require.Nil(t, call.body["max_tokens"])
+	})
+
 	t.Run("should return reasoning tokens", func(t *testing.T) {
 		t.Parallel()
 
