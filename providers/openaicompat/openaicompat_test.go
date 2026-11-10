@@ -1,6 +1,7 @@
 package openaicompat
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -1058,4 +1059,28 @@ func TestToPromptFunc_CanceledThinkingTurnDropped(t *testing.T) {
 			len(m.OfAssistant.ToolCalls) > 0
 		require.True(t, valid, "assistant message %d has neither content nor tool calls", i)
 	}
+}
+
+func TestPrepareCallFunc_KeepsMaxTokens(t *testing.T) {
+	t.Parallel()
+
+	srv, bodies := serveSSE(t, cannedStopReplySSE)
+	provider, err := New(WithBaseURL(srv.URL), WithAPIKey("x"))
+	require.NoError(t, err)
+	lm, err := provider.LanguageModel(t.Context(), "deepseek-v4-flash")
+	require.NoError(t, err)
+
+	_, err = lm.Generate(t.Context(), fantasy.Call{
+		Prompt: fantasy.Prompt{
+			{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "date?"}}},
+		},
+		MaxOutputTokens: new(int64(1000)),
+	})
+	require.NoError(t, err)
+	require.Len(t, *bodies, 1)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal((*bodies)[0], &body))
+	require.Equal(t, float64(1000), body["max_tokens"])
+	require.NotContains(t, body, "max_completion_tokens")
 }
